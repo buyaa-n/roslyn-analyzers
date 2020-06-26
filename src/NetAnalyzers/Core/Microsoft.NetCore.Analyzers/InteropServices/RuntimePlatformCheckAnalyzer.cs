@@ -1,10 +1,16 @@
 // Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license information.
 
+using System;
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Linq;
+using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using System.Text;
+using System.Text.RegularExpressions;
 using Analyzer.Utilities;
 using Analyzer.Utilities.Extensions;
 using Analyzer.Utilities.PooledObjects;
@@ -20,65 +26,320 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
 #pragma warning restore RS1001 // Missing diagnostic analyzer attribute.
     {
         internal const string RuleId = "CA1416";
-        private static readonly ImmutableArray<string> s_platformCheckMethods = ImmutableArray.Create("IsOSPlatformOrLater", "IsOSPlatformEarlierThan");
 
-        private static readonly LocalizableString s_localizableTitle = new LocalizableResourceString(nameof(MicrosoftNetCoreAnalyzersResources.RuntimePlatformCheckTitle), MicrosoftNetCoreAnalyzersResources.ResourceManager, typeof(MicrosoftNetCoreAnalyzersResources));
-        private static readonly LocalizableString s_localizableMessage = new LocalizableResourceString(nameof(MicrosoftNetCoreAnalyzersResources.RuntimePlatformCheckMessage), MicrosoftNetCoreAnalyzersResources.ResourceManager, typeof(MicrosoftNetCoreAnalyzersResources));
-        private static readonly LocalizableString s_localizableDescription = new LocalizableResourceString(nameof(MicrosoftNetCoreAnalyzersResources.RuntimePlatformCheckMessage), MicrosoftNetCoreAnalyzersResources.ResourceManager, typeof(MicrosoftNetCoreAnalyzersResources));
+        private static readonly LocalizableString s_localizableTitle = new LocalizableResourceString(nameof(MicrosoftNetCoreAnalyzersResources.PlatformCompatCheckTitle), MicrosoftNetCoreAnalyzersResources.ResourceManager, typeof(MicrosoftNetCoreAnalyzersResources));
+        private static readonly LocalizableString s_localizableAddedMessage = new LocalizableResourceString(nameof(MicrosoftNetCoreAnalyzersResources.PlatformCompatCheckAddedMessage), MicrosoftNetCoreAnalyzersResources.ResourceManager, typeof(MicrosoftNetCoreAnalyzersResources));
+        private static readonly LocalizableString s_localizableObsoleteMessage = new LocalizableResourceString(nameof(MicrosoftNetCoreAnalyzersResources.PlatformCompatCheckObsoleteMessage), MicrosoftNetCoreAnalyzersResources.ResourceManager, typeof(MicrosoftNetCoreAnalyzersResources));
+        private static readonly LocalizableString s_localizableRemovedMessage = new LocalizableResourceString(nameof(MicrosoftNetCoreAnalyzersResources.PlatformCompatCheckRemovedMessage), MicrosoftNetCoreAnalyzersResources.ResourceManager, typeof(MicrosoftNetCoreAnalyzersResources));
+        private static readonly LocalizableString s_localizableDescription = new LocalizableResourceString(nameof(MicrosoftNetCoreAnalyzersResources.PlatformCompatCheckDescription), MicrosoftNetCoreAnalyzersResources.ResourceManager, typeof(MicrosoftNetCoreAnalyzersResources));
+        private const char SeparatorDash = '-';
+        private const char SeparatorSemicolon = ';';
+        private const char SeparatorDot = '.';
+        private const string AddedAttributeName = nameof(AddedInOSPlatformVersionAttribute);
+        private const string ObsoleteAttributeName = nameof(ObsoletedInOSPlatformVersionAttribute);
+        private const string RemovedAttributeName = nameof(RemovedInOSPlatformVersionAttribute);
+        private const string Windows = nameof(Windows);
+        private static readonly Regex s_neutralTfmRegex = new Regex(@"^net([5-9]|standard\d|coreapp\d)\.\d$", RegexOptions.IgnoreCase);
+        private static readonly Regex s_osParseRegex = new Regex(@"([a-z]{3,7})((\d{1,2})\.?(\d)?\.?(\d)?\.?(\d)?)*", RegexOptions.IgnoreCase);
 
-        internal static DiagnosticDescriptor Rule = DiagnosticDescriptorHelper.Create(RuleId,
+        internal static DiagnosticDescriptor AddedRule = DiagnosticDescriptorHelper.Create(RuleId,
                                                                                       s_localizableTitle,
-                                                                                      s_localizableMessage,
+                                                                                      s_localizableAddedMessage,
                                                                                       DiagnosticCategory.Interoperability,
                                                                                       RuleLevel.IdeSuggestion,
                                                                                       description: s_localizableDescription,
                                                                                       isPortedFxCopRule: false,
                                                                                       isDataflowRule: false);
-        public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(Rule);
+        internal static DiagnosticDescriptor ObsoleteRule = DiagnosticDescriptorHelper.Create(RuleId,
+                                                                                      s_localizableTitle,
+                                                                                      s_localizableAddedMessage,
+                                                                                      DiagnosticCategory.Interoperability,
+                                                                                      RuleLevel.IdeSuggestion,
+                                                                                      description: s_localizableObsoleteMessage,
+                                                                                      isPortedFxCopRule: false,
+                                                                                      isDataflowRule: false);
+        internal static DiagnosticDescriptor RemovedRule = DiagnosticDescriptorHelper.Create(RuleId,
+                                                                                      s_localizableTitle,
+                                                                                      s_localizableAddedMessage,
+                                                                                      DiagnosticCategory.Interoperability,
+                                                                                      RuleLevel.IdeSuggestion,
+                                                                                      description: s_localizableRemovedMessage,
+                                                                                      isPortedFxCopRule: false,
+                                                                                      isDataflowRule: false);
+        public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(AddedRule, ObsoleteRule, RemovedRule);
 
         public override void Initialize(AnalysisContext context)
         {
             context.EnableConcurrentExecution();
             context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
+            bool suppressed = false;
 
             context.RegisterCompilationStartAction(context =>
-            {
-                // TODO: Remove the below temporary hack once new APIs are available.
-                var typeName = WellKnownTypeNames.SystemRuntimeInteropServicesRuntimeInformation + "Helper";
-
-                if (!context.Compilation.TryGetOrCreateTypeByMetadataName(typeName, out var runtimeInformationType) ||
-                    !context.Compilation.TryGetOrCreateTypeByMetadataName(WellKnownTypeNames.SystemRuntimeInteropServicesOSPlatform, out var osPlatformType))
+            { 
+                context.RegisterOperationAction(context =>
                 {
-                    return;
-                }
-
-                var platformCheckMethods = GetPlatformCheckMethods(runtimeInformationType, osPlatformType);
-                if (platformCheckMethods.IsEmpty)
-                {
-                    return;
-                }
-
-                context.RegisterOperationBlockStartAction(context => AnalyzerOperationBlock(context, platformCheckMethods, osPlatformType));
-                return;
-
-                static ImmutableArray<IMethodSymbol> GetPlatformCheckMethods(INamedTypeSymbol runtimeInformationType, INamedTypeSymbol osPlatformType)
-                {
-                    using var builder = ArrayBuilder<IMethodSymbol>.GetInstance();
-                    var methods = runtimeInformationType.GetMembers().OfType<IMethodSymbol>();
-                    foreach (var method in methods)
+                    var osAttribute = context.Compilation.GetOrCreateTypeByMetadataName(WellKnownTypeNames.SystemRuntimeVersioningOSPlatformVersionAttribute);
+                    if (osAttribute == null)
                     {
-                        if (s_platformCheckMethods.Contains(method.Name) &&
-                            method.Parameters.Length >= 1 &&
-                            method.Parameters[0].Type.Equals(osPlatformType) &&
-                            method.Parameters.Skip(1).All(p => p.Type.SpecialType == SpecialType.System_Int32))
-                        {
-                            builder.Add(method);
-                        }
+                        return;
                     }
 
-                    return builder.ToImmutable();
+                    suppressed = AnalyzeInvocationOperation((IInvocationOperation)context.Operation, osAttribute, context);
                 }
+                , OperationKind.Invocation);
+
+                /*                                
+                                // TODO: Remove the below temporary hack once new APIs are available.
+                                var typeName = WellKnownTypeNames.SystemRuntimeInteropServicesRuntimeInformation + "Helper";
+
+                                if (!context.Compilation.TryGetOrCreateTypeByMetadataName(typeName, out var runtimeInformationType) ||
+                                    !context.Compilation.TryGetOrCreateTypeByMetadataName(WellKnownTypeNames.SystemRuntimeInteropServicesOSPlatform, out var osPlatformType))
+                                {
+                                    return;
+                                }
+
+                                var platformCheckMethods = GetPlatformCheckMethods(runtimeInformationType, osPlatformType);
+                                if (platformCheckMethods.IsEmpty)
+                                {
+                                    return;
+                                }
+
+                                context.RegisterOperationBlockStartAction(context => AnalyzerOperationBlock(context, platformCheckMethods, osPlatformType));
+                                return;
+
+                                static ImmutableArray<IMethodSymbol> GetPlatformCheckMethods(INamedTypeSymbol runtimeInformationType, INamedTypeSymbol osPlatformType)
+                                {
+                                    using var builder = ArrayBuilder<IMethodSymbol>.GetInstance();
+                                    var methods = runtimeInformationType.GetMembers().OfType<IMethodSymbol>();
+                                    foreach (var method in methods)
+                                    {
+                                        if (s_platformCheckMethods.Contains(method.Name) &&
+                                            method.Parameters.Length >= 1 &&
+                                            method.Parameters[0].Type.Equals(osPlatformType) &&
+                                            method.Parameters.Skip(1).All(p => p.Type.SpecialType == SpecialType.System_Int32))
+                                        {
+                                            builder.Add(method);
+                                        }
+                                    }
+
+                                    return builder.ToImmutable();
+                                }*/
             });
+        }
+
+        private static bool AnalyzeInvocationOperation(IInvocationOperation operation, INamedTypeSymbol osAttribute, OperationAnalysisContext context)
+        {
+            List<PlatformInfo>? parsedTfms = ParseTfm(context, context.ContainingSymbol);
+
+            var attributes = GetApplicableAttributes(operation.TargetMethod.GetAttributes(), operation.TargetMethod.ContainingType, osAttribute);
+
+            foreach (AttributeData attribute in attributes)
+            {
+                PlatformInfo parsedAttribute = PlatformInfo.ParseAttributeData(attribute);
+                if (parsedTfms != null)
+                {
+                    foreach (PlatformInfo tfm in parsedTfms)
+                    {
+                        if (tfm.OsPlatform != null && tfm.OsPlatform.Equals(parsedAttribute.OsPlatform, StringComparison.InvariantCultureIgnoreCase))
+                        {
+                            if (AttributeVersionsMatch(parsedAttribute, tfm))
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                }
+
+                if (Suppress(parsedAttribute, context.ContainingSymbol))
+                {
+                    return true;
+                }
+                else
+                {
+                    context.ReportDiagnostic(context.Operation.Syntax.CreateDiagnostic(SwitchRule(parsedAttribute.AttributeType), operation.TargetMethod.Name,
+                       parsedAttribute.OsPlatform!, $"{parsedAttribute.Version[0]}.{parsedAttribute.Version[1]}.{parsedAttribute.Version[2]}.{parsedAttribute.Version[3]}"));
+                }
+            }
+            return false;
+        }
+
+        private static DiagnosticDescriptor SwitchRule(OsAttrbiteType attributeType)
+        {
+            if (attributeType == OsAttrbiteType.AddedInOSPlatformVersionAttribute)
+                return AddedRule;
+            if (attributeType == OsAttrbiteType.ObsoletedInOSPlatformVersionAttribute)
+                return ObsoleteRule;
+            return RemovedRule;
+        }
+
+        private static List<PlatformInfo>? ParseTfm(OperationAnalysisContext context, ISymbol containingSymbol)
+        { // ((net[5-9]|netstandard\d|netcoreapp\d)\.\d(-([a-z]{3,7})(\d{1,2}\.?\d?\.?\d?\.?\d?)*)?)+
+            string? tfmString = context.Options.GetMSBuildPropertyValue(MSBuildPropertyOptionNames.TargetFramework, AddedRule, containingSymbol, context.Compilation, context.CancellationToken);
+            if (tfmString != null)
+            {
+                List<PlatformInfo> platformInfos = new List<PlatformInfo>() { };
+                var tfms = tfmString.Split(SeparatorSemicolon);
+
+                foreach (var tfm in tfms)
+                {
+                    var tokens = tfm.Split(SeparatorDash);
+                    PlatformInfo platformInfo = new PlatformInfo();
+                    platformInfo.Version = new int[4];
+                    if (tokens.Length == 1)
+                    {
+                        if (!s_neutralTfmRegex.IsMatch(tokens[0]))
+                        {
+                            platformInfo.OsPlatform = Windows;
+                        }
+                    }
+                    else
+                    {
+                        Debug.Assert(tokens.Length == 2);
+                        Match match = s_osParseRegex.Match(tokens[1]);
+                        if (match.Success)
+                        {
+                            platformInfo.OsPlatform = match.Groups[1].Value;
+                            for (int i = 3; i < 7; i++)
+                            {
+                                if (!string.IsNullOrEmpty(match.Groups[i].Value))
+                                {
+                                    platformInfo.Version[i - 3] = int.Parse(match.Groups[i].Value, CultureInfo.InvariantCulture);
+                                }
+                            }
+                        }
+                        var tpmv = context.Options.GetMSBuildPropertyValue(MSBuildPropertyOptionNames.TargetPlatformMinVersion, AddedRule, containingSymbol, context.Compilation, context.CancellationToken);
+                        if (tpmv != null)
+                        {
+                            var splitted = tpmv.Split(SeparatorDot);
+                            int i = 0;
+                            foreach (var token in splitted)
+                            {
+                                platformInfo.Version[i] = int.Parse(token, CultureInfo.InvariantCulture);
+                            }
+                        }
+                    }
+                    platformInfos.Add(platformInfo);
+                }
+                return platformInfos;
+            }
+            return null;
+        }
+
+        private static List<AttributeData> GetApplicableAttributes(ImmutableArray<AttributeData> immediateAttributes, INamedTypeSymbol type, INamedTypeSymbol osAttribute)
+        {
+            var attributes = new List<AttributeData>();
+            foreach (AttributeData attribute in immediateAttributes)
+            {
+                if (attribute.AttributeClass.DerivesFromOrImplementsAnyConstructionOf(osAttribute))
+                {
+                    attributes.Add(attribute);
+                }
+            }
+
+            while (type != null)
+            {
+                var current = type.GetAttributes();
+                foreach (var attribute in current)
+                {
+                    if (attribute.AttributeClass.DerivesFromOrImplementsAnyConstructionOf(osAttribute))
+                    {
+                        attributes.Add(attribute);
+                    }
+                }
+                type = type.BaseType;
+            }
+            return attributes;
+        }
+
+        private static bool Suppress(PlatformInfo diagnosingAttribute, ISymbol containingSymbol)
+        {
+            while (containingSymbol != null)
+            {
+                var attributes = containingSymbol.GetAttributes();
+                if (attributes != null)
+                {
+                    foreach (AttributeData attribute in attributes)
+                    {
+                        if (diagnosingAttribute.AttributeType.ToString().Equals(attribute.AttributeClass.Name, StringComparison.InvariantCulture)
+                            && diagnosingAttribute.OsPlatform!.Equals(attribute.ConstructorArguments[0].Value.ToString(), StringComparison.InvariantCultureIgnoreCase)
+                            && AttributeVersionsMatch(diagnosingAttribute, attribute))
+                        {
+                            return true;
+                        }
+                    }
+                }
+
+                containingSymbol = containingSymbol.ContainingSymbol;
+            }
+            return false;
+        }
+
+        private static bool AttributeVersionsMatch(PlatformInfo diagnosingAttribute, AttributeData suppressingAttribute)
+        {
+            if (diagnosingAttribute.AttributeType == OsAttrbiteType.AddedInOSPlatformVersionAttribute)
+            {
+                for (int i = 1; i < 5; i++)
+                {
+                    if (diagnosingAttribute.Version[i - 1] < (int)suppressingAttribute.ConstructorArguments[i].Value)
+                    {
+                        return true;
+                    }
+                    else if (diagnosingAttribute.Version[i - 1] > (int)suppressingAttribute.ConstructorArguments[i].Value)
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            else
+            {
+                for (int i = 1; i < 5; i++)
+                {
+                    if (diagnosingAttribute.Version[i - 1] > (int)suppressingAttribute.ConstructorArguments[i].Value)
+                    {
+                        return true;
+                    }
+                    else if (diagnosingAttribute.Version[i - 1] < (int)suppressingAttribute.ConstructorArguments[i].Value)
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        }
+
+        private static bool AttributeVersionsMatch(PlatformInfo diagnosingAttribute, PlatformInfo tfm)
+        {
+            if (diagnosingAttribute.AttributeType == OsAttrbiteType.AddedInOSPlatformVersionAttribute)
+            {
+                for (int i = 0; i < 4; i++)
+                {
+                    if (diagnosingAttribute.Version[i] < tfm.Version[i])
+                    {
+                        return true;
+                    }
+                    else if (diagnosingAttribute.Version[i] > tfm.Version[i])
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            }
+            else
+            {
+                for (int i = 0; i < 4; i++)
+                {
+                    if (diagnosingAttribute.Version[i] > tfm.Version[i])
+                    {
+                        return true;
+                    }
+                    else if (diagnosingAttribute.Version[i] < tfm.Version[i])
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            };
         }
 
         private static void AnalyzerOperationBlock(
@@ -118,7 +379,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                     var wellKnownTypeProvider = WellKnownTypeProvider.GetOrCreate(context.Compilation);
                     var analysisResult = FlightEnabledAnalysis.TryGetOrComputeResult(
                         cfg, context.OwningSymbol, platformCheckMethods, c => GetValueForFlightEnablingMethodInvocation(c, osPlatformType),
-                        wellKnownTypeProvider, context.Options, Rule, performPointsToAnalysis: needsValueContentAnalysis,
+                        wellKnownTypeProvider, context.Options, AddedRule, performPointsToAnalysis: needsValueContentAnalysis,
                         performValueContentAnalysis: needsValueContentAnalysis, context.CancellationToken,
                         out var pointsToAnalysisResult, out var valueContentAnalysisResult);
                     if (analysisResult == null)
@@ -140,7 +401,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                         // TODO: Add real checks.
 
                         // TODO Platform checks:'{0}'
-                        context.ReportDiagnostic(platformSpecificOperation.CreateDiagnostic(Rule, value));
+                        context.ReportDiagnostic(platformSpecificOperation.CreateDiagnostic(AddedRule, value));
                     }
                 }
                 finally
@@ -256,5 +517,43 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
 
             return false;
         }
+
+        private enum OsAttrbiteType
+        {
+            None, AddedInOSPlatformVersionAttribute, ObsoletedInOSPlatformVersionAttribute, RemovedInOSPlatformVersionAttribute
+        }
+
+        private class PlatformInfo
+        {
+            public OsAttrbiteType AttributeType { get; set; }
+            public string? OsPlatform { get; set; }
+            public int[] Version { get; set; }
+
+            public static PlatformInfo ParseAttributeData(AttributeData osAttibute)
+            {
+                PlatformInfo platformInfo = new PlatformInfo();
+                switch (osAttibute.AttributeClass.Name)
+                {
+                    case AddedAttributeName:
+                        platformInfo.AttributeType = OsAttrbiteType.AddedInOSPlatformVersionAttribute; break;
+                    case ObsoleteAttributeName:
+                        platformInfo.AttributeType = OsAttrbiteType.ObsoletedInOSPlatformVersionAttribute; break;
+                    case RemovedAttributeName:
+                        platformInfo.AttributeType = OsAttrbiteType.RemovedInOSPlatformVersionAttribute; break;
+                    default:
+                        platformInfo.AttributeType = OsAttrbiteType.None; break;
+                }
+
+                platformInfo.OsPlatform = osAttibute.ConstructorArguments[0].Value.ToString();
+                platformInfo.Version = new int[4];
+                for (int i = 1; i < osAttibute.ConstructorArguments.Length; i++)
+                {
+                    platformInfo.Version[i - 1] = (int)osAttibute.ConstructorArguments[i].Value;
+                }
+                return platformInfo;
+            }
+        }
     }
+
+
 }

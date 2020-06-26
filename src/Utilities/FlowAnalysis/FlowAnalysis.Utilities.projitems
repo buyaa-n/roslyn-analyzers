@@ -24,6 +24,7 @@
     <Compile Include="$(MSBuildThisFileDirectory)FlowAnalysis\Analysis\FlightEnabledAnalysis\FlightEnabledAnalysis.FlightEnabledDataFlowOperationVisitor.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)FlowAnalysis\Analysis\FlightEnabledAnalysis\FlightEnabledAnalysisContext.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)FlowAnalysis\Analysis\FlightEnabledAnalysis\FlightEnabledBlockAnalysisResult.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)FlowAnalysis\Analysis\FlightEnabledAnalysis\MockOsPlatformAttribute.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)FlowAnalysis\Analysis\PointsToAnalysis\PointsToAnalysisResult.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)FlowAnalysis\Analysis\PointsToAnalysis\TrackedEntitiesBuilder.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)FlowAnalysis\Framework\DataFlow\AbstractAnalysisData.cs" />
