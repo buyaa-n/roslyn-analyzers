@@ -20,7 +20,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
     [DiagnosticAnalyzer(LanguageNames.CSharp)]
     public sealed partial class PlatformCompatabilityAnalyzer : DiagnosticAnalyzer
     {
-        internal const string RuleId = "CA1417";
+        internal const string RuleId = "CA1416";
         private static readonly ImmutableArray<string> s_platformCheckMethodNames = ImmutableArray.Create("IsOSPlatformOrLater", "IsOSPlatformEarlierThan");
         private static readonly ImmutableArray<string> s_osPlatformAttributes = ImmutableArray.Create(MinimumOSPlatformAttribute, ObsoletedInOSPlatformAttribute, RemovedInOSPlatformAttribute);
         private static readonly LocalizableString s_localizableTitle = new LocalizableResourceString(nameof(MicrosoftNetCoreAnalyzersResources.PlatformCompatabilityCheckTitle), MicrosoftNetCoreAnalyzersResources.ResourceManager, typeof(MicrosoftNetCoreAnalyzersResources));
@@ -96,7 +96,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
 
         private void AnalyzerOperationBlock(OperationBlockStartAnalysisContext context, ImmutableArray<IMethodSymbol> guardMethods, INamedTypeSymbol osPlatformType)
         {
-            var parsedTfms = ParseTfm(context.Options, context.OwningSymbol, context.Compilation, context.CancellationToken);
+            var parsedTfms = ParseTfm(context.Options, context.Compilation, context.CancellationToken);
             var platformSpecificOperations = PooledDictionary<IOperation, ImmutableArray<PlatformAttributeInfo>>.GetInstance();
 
             context.RegisterOperationAction(context =>
@@ -309,9 +309,9 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
             return RemovedRule;
         }
 
-        private static List<PlatformAttributeInfo>? ParseTfm(AnalyzerOptions options, ISymbol containingSymbol, Compilation compilation, CancellationToken cancellationToken)
+        private static List<PlatformAttributeInfo>? ParseTfm(AnalyzerOptions options, Compilation compilation, CancellationToken cancellationToken)
         {
-            string? tfmString = options.GetMSBuildPropertyValue(MSBuildPropertyOptionNames.TargetFramework, MinimumOsRule, containingSymbol, compilation, cancellationToken);
+            string? tfmString = options.GetMSBuildPropertyValue(MSBuildPropertyOptionNames.TargetFramework, compilation, cancellationToken);
             if (tfmString != null)
             {
                 using var builder = ArrayBuilder<PlatformAttributeInfo>.GetInstance();
@@ -334,7 +334,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                         Debug.Assert(tokens.Length == 2);
                         if (PlatformAttributeInfo.TryParseTfmString(tokens[1], out PlatformAttributeInfo parsedTfm))
                         {
-                            var tpmv = options.GetMSBuildPropertyValue(MSBuildPropertyOptionNames.TargetPlatformMinVersion, MinimumOsRule, containingSymbol, compilation, cancellationToken);
+                            var tpmv = options.GetMSBuildPropertyValue(MSBuildPropertyOptionNames.TargetPlatformMinVersion, compilation, cancellationToken);
                             if (tpmv != null)
                             {
                                 if (Version.TryParse(tpmv, out Version version))

@@ -535,7 +535,7 @@ public class OsDependentClass
         public async Task TfmAndTargetPlatformMinVersionWithMinimumOsAttribute(string editorConfigText, bool expectDiagnostic)
         {
             var invocation = expectDiagnostic ? @"[|M2()|]" : "M2()";
-            var source =$@"
+            var source = $@"
 using System.Runtime.Versioning;
 
 public class Test
@@ -592,7 +592,7 @@ public class Test
         public async Task TfmAndTargetPlatformMinVersionWithObsoleteAttribute(string editorConfigText, bool expectDiagnostic)
         {
             var invocation = expectDiagnostic ? @"[|M2()|]" : "M2()";
-            var source =$@"
+            var source = $@"
 using System.Runtime.Versioning;
 
 public class Test
