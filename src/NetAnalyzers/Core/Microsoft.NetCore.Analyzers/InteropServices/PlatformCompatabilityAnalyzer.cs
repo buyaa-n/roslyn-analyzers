@@ -1,12 +1,9 @@
 ﻿// Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license information.
 
 using System;
-using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Linq;
-using System.Text.RegularExpressions;
-using System.Threading;
 using Analyzer.Utilities;
 using Analyzer.Utilities.Extensions;
 using Analyzer.Utilities.PooledObjects;
@@ -28,14 +25,14 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
         private static readonly LocalizableString s_localizableObsoleteMessage = new LocalizableResourceString(nameof(MicrosoftNetCoreAnalyzersResources.PlatformCompatabilityCheckObsoleteMessage), MicrosoftNetCoreAnalyzersResources.ResourceManager, typeof(MicrosoftNetCoreAnalyzersResources));
         private static readonly LocalizableString s_localizableRemovedMessage = new LocalizableResourceString(nameof(MicrosoftNetCoreAnalyzersResources.PlatformCompatabilityCheckRemovedMessage), MicrosoftNetCoreAnalyzersResources.ResourceManager, typeof(MicrosoftNetCoreAnalyzersResources));
         private static readonly LocalizableString s_localizableDescription = new LocalizableResourceString(nameof(MicrosoftNetCoreAnalyzersResources.PlatformCompatabilityCheckDescription), MicrosoftNetCoreAnalyzersResources.ResourceManager, typeof(MicrosoftNetCoreAnalyzersResources));
-        private const char SeparatorDash = '-';
-        private const char SeparatorSemicolon = ';';
+
         private const string MinimumOSPlatformAttribute = nameof(MinimumOSPlatformAttribute);
         private const string ObsoletedInOSPlatformAttribute = nameof(ObsoletedInOSPlatformAttribute);
         private const string RemovedInOSPlatformAttribute = nameof(RemovedInOSPlatformAttribute);
         private const string TargetPlatformAttribute = nameof(TargetPlatformAttribute);
         private const string Windows = nameof(Windows);
-        private static readonly Regex s_neutralTfmRegex = new Regex(@"^net([5-9]|standard\d|coreapp\d)\.\d$", RegexOptions.IgnoreCase);
+        private const string OSX = nameof(OSX);
+        private const string macOS = nameof(macOS);
 
         internal static DiagnosticDescriptor MinimumOsRule = DiagnosticDescriptorHelper.Create(RuleId,
                                                                                       s_localizableTitle,
@@ -96,12 +93,11 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
 
         private void AnalyzerOperationBlock(OperationBlockStartAnalysisContext context, ImmutableArray<IMethodSymbol> guardMethods, INamedTypeSymbol osPlatformType)
         {
-            var parsedTfms = ParseTfm(context.Options, context.Compilation, context.CancellationToken);
             var platformSpecificOperations = PooledDictionary<IOperation, ImmutableArray<PlatformAttributeInfo>>.GetInstance();
 
             context.RegisterOperationAction(context =>
             {
-                AnalyzeInvocationOperation(context.Operation, context, parsedTfms, ref platformSpecificOperations);
+                AnalyzeInvocationOperation(context.Operation, context, ref platformSpecificOperations);
             }
             , OperationKind.Invocation, OperationKind.PropertyReference, OperationKind.FieldReference);
 
@@ -171,7 +167,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                     {
                         if (!info.Negated)
                         {
-                            if (IsOSPlatformsEqual(attribute.OsPlatformName, info.PlatformPropertyName))
+                            if (IsOSPlatformsEqual(attribute.PlatformName, info.PlatformPropertyName))
                             {
                                 if (info.InvokedPlatformCheckMethodName.Equals(s_platformCheckMethodNames[0], StringComparison.InvariantCulture))
                                 {
@@ -224,11 +220,11 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                 operationName = fOperation.Field.Name;
             }
 
-            context.ReportDiagnostic(operation.CreateDiagnostic(SwitchRule(attribute.AttributeType), operationName, attribute.OsPlatformName, attribute.Version.ToString()));
+            context.ReportDiagnostic(operation.CreateDiagnostic(SelectRule(attribute.AttributeType), operationName, attribute.PlatformName, attribute.Version.ToString()));
         }
 
         private static void AnalyzeInvocationOperation(IOperation operation, OperationAnalysisContext context,
-            List<PlatformAttributeInfo>? parsedTfms, ref PooledDictionary<IOperation, ImmutableArray<PlatformAttributeInfo>> platformSpecificOperations)
+            ref PooledDictionary<IOperation, ImmutableArray<PlatformAttributeInfo>> platformSpecificOperations)
         {
             using var builder = ArrayBuilder<PlatformAttributeInfo>.GetInstance();
             AttributeData[]? attributes = null;
@@ -239,8 +235,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
             }
             else if (operation is IPropertyReferenceOperation pOperation)
             {
-                if (!IsWithinConditionalOperation(operation))
-                    attributes = FindAllPlatformAttributesApplied(pOperation.Property.GetAttributes(), pOperation.Property.ContainingType);
+                attributes = FindAllPlatformAttributesApplied(pOperation.Property.GetAttributes(), pOperation.Property.ContainingType);
             }
             else if (operation is IFieldReferenceOperation fOperation)
             {
@@ -252,9 +247,9 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
             {
                 foreach (AttributeData attribute in attributes)
                 {
-                    if (PlatformAttributeInfo.TryParseAttributeData(attribute, out PlatformAttributeInfo parsedAttribute))
+                    if (PlatformAttributeInfo.TryParsePlatformAttributeInfo(attribute, out PlatformAttributeInfo parsedAttribute))
                     {
-                        if (!(IsSuppressedByTfm(parsedTfms, parsedAttribute) || IsSuppressedByAttribute(parsedAttribute, context.ContainingSymbol)))
+                        if (!IsSuppressedByAttribute(parsedAttribute, context.ContainingSymbol))
                         {
                             builder.Add(parsedAttribute);
                         }
@@ -269,7 +264,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
         }
 
         private static bool IsWithinConditionalOperation(IOperation pOperation) =>
-         pOperation.Parent is IBinaryOperation bo &&
+            pOperation.ConstantValue.HasValue && pOperation.Parent is IBinaryOperation bo &&
             (bo.OperatorKind == BinaryOperatorKind.Equals ||
             bo.OperatorKind == BinaryOperatorKind.NotEquals ||
             bo.OperatorKind == BinaryOperatorKind.GreaterThan ||
@@ -277,30 +272,28 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
             bo.OperatorKind == BinaryOperatorKind.GreaterThanOrEqual ||
             bo.OperatorKind == BinaryOperatorKind.LessThanOrEqual);
 
-        private static bool IsSuppressedByTfm(List<PlatformAttributeInfo>? parsedTfms, PlatformAttributeInfo parsedAttribute)
+        private static bool IsOSPlatformsEqual(string left, string right)
         {
-            if (parsedTfms != null)
+            if (left.Equals(right, StringComparison.OrdinalIgnoreCase))
             {
-                foreach (PlatformAttributeInfo tfm in parsedTfms)
-                {
-                    if (IsOSPlatformsEqual(parsedAttribute.OsPlatformName, tfm.OsPlatformName))
-                    {
-                        return AttributeVersionsMatch(parsedAttribute, tfm);
-                    }
-                }
+                return true;
             }
-
-            return false;
+            else
+            {
+                var normalizedLeft = NormalizeOSName(left);
+                var normalizedRight = NormalizeOSName(right);
+                return string.Equals(normalizedLeft, normalizedRight, StringComparison.OrdinalIgnoreCase);
+            }
         }
 
-        private static bool IsOSPlatformsEqual(string firstOs, string secondOs)
+        private static string NormalizeOSName(string name)
         {
-            return firstOs.Equals(secondOs, StringComparison.OrdinalIgnoreCase)
-                || (firstOs.Equals("OSX", StringComparison.OrdinalIgnoreCase) && secondOs.Equals("MACOS", StringComparison.OrdinalIgnoreCase))
-                || (secondOs.Equals("OSX", StringComparison.OrdinalIgnoreCase) && firstOs.Equals("MACOS", StringComparison.OrdinalIgnoreCase));
+            if (name.Equals(OSX, StringComparison.OrdinalIgnoreCase))
+                return macOS;
+            return name;
         }
 
-        private static DiagnosticDescriptor SwitchRule(PlatformAttributeType attributeType)
+        private static DiagnosticDescriptor SelectRule(PlatformAttributeType attributeType)
         {
             if (attributeType == PlatformAttributeType.MinimumOSPlatformAttribute)
                 return MinimumOsRule;
@@ -309,53 +302,11 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
             return RemovedRule;
         }
 
-        private static List<PlatformAttributeInfo>? ParseTfm(AnalyzerOptions options, Compilation compilation, CancellationToken cancellationToken)
-        {
-            string? tfmString = options.GetMSBuildPropertyValue(MSBuildPropertyOptionNames.TargetFramework, compilation, cancellationToken);
-            if (tfmString != null)
-            {
-                using var builder = ArrayBuilder<PlatformAttributeInfo>.GetInstance();
-
-                var tfms = tfmString.Split(SeparatorSemicolon);
-
-                foreach (var tfm in tfms)
-                {
-                    var tokens = tfm.Split(SeparatorDash);
-
-                    if (tokens.Length == 1)
-                    {
-                        if (!s_neutralTfmRegex.IsMatch(tokens[0]))
-                        {
-                            builder.Add(CreateWindowsOnlyPlatformInfo());
-                        }
-                    }
-                    else
-                    {
-                        Debug.Assert(tokens.Length == 2);
-                        if (PlatformAttributeInfo.TryParseTfmString(tokens[1], out PlatformAttributeInfo parsedTfm))
-                        {
-                            var tpmv = options.GetMSBuildPropertyValue(MSBuildPropertyOptionNames.TargetPlatformMinVersion, compilation, cancellationToken);
-                            if (tpmv != null)
-                            {
-                                if (Version.TryParse(tpmv, out Version version))
-                                {
-                                    parsedTfm.Version = version;
-                                }
-                            }
-                            builder.Add(parsedTfm);
-                        }
-                    }
-                }
-                return builder.ToList();
-            }
-            return null;
-        }
-
         private static PlatformAttributeInfo CreateWindowsOnlyPlatformInfo()
         {
             var platformInfo = new PlatformAttributeInfo();
             platformInfo.Version = new Version(7, 0);
-            platformInfo.OsPlatformName = Windows;
+            platformInfo.PlatformName = Windows;
             return platformInfo;
         }
 
@@ -396,9 +347,9 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                     {
                         if (diagnosingAttribute.AttributeType.ToString() == attribute.AttributeClass.Name)
                         {
-                            if (PlatformAttributeInfo.TryParseAttributeData(attribute, out PlatformAttributeInfo parsedAttribute))
+                            if (PlatformAttributeInfo.TryParsePlatformAttributeInfo(attribute, out PlatformAttributeInfo parsedAttribute))
                             {
-                                if (IsOSPlatformsEqual(diagnosingAttribute.OsPlatformName, parsedAttribute.OsPlatformName) && AttributeVersionsMatch(diagnosingAttribute, parsedAttribute))
+                                if (IsOSPlatformsEqual(diagnosingAttribute.PlatformName, parsedAttribute.PlatformName) && AttributeVersionsMatch(diagnosingAttribute, parsedAttribute))
                                 {
                                     return true;
                                 }

@@ -160,9 +160,9 @@ public class Test
 
         public static IEnumerable<object[]> Create_AtrrbiuteProperty_WithCondtions()
         {
-            yield return new object[] { "MinimumOSPlatform", "string StringProperty", " == StringProperty", @"StringProperty|] = ""Hello""", "StringProperty" };
-            yield return new object[] { "ObsoletedInOSPlatform", "int IntProperty", " > IntProperty", "IntProperty|] = 5", "IntProperty" };
-            yield return new object[] { "RemovedInOSPlatform", "int RemovedProperty", " <= RemovedProperty", "RemovedProperty|] = 3", "RemovedProperty" };
+            yield return new object[] { "MinimumOSPlatform", "string StringProperty", " == [|StringProperty|]", @"StringProperty|] = ""Hello""", "StringProperty" };
+            yield return new object[] { "ObsoletedInOSPlatform", "int IntProperty", " > [|IntProperty|]", "IntProperty|] = 5", "IntProperty" };
+            yield return new object[] { "RemovedInOSPlatform", "int RemovedProperty", " <= [|RemovedProperty|]", "RemovedProperty|] = 3", "RemovedProperty" };
         }
 
         [Fact]
@@ -528,87 +528,6 @@ public class OsDependentClass
                 await VerifyAnalyzerAsyncCs(source, VerifyCS.Diagnostic(PlatformCompatabilityAnalyzer.RemovedRule).WithSpan(10, 9, 10, 17).WithArguments("M2", "Windows", "10.1.2.3"));
             else
                 await VerifyAnalyzerAsyncCs(source);
-        }
-
-        [Theory]
-        [MemberData(nameof(MinimumOsAttributeTfmTestData))]
-        public async Task TfmAndTargetPlatformMinVersionWithMinimumOsAttribute(string editorConfigText, bool expectDiagnostic)
-        {
-            var invocation = expectDiagnostic ? @"[|M2()|]" : "M2()";
-            var source = $@"
-using System.Runtime.Versioning;
-
-public class Test
-{{
-    public void M1()
-    {{
-        {invocation};
-    }}
-    [MinimumOSPlatform(""Windows10.1.1.1"")]
-    public void M2()
-    {{
-    }}
-}}
-" + MockAttributesSource;
-            await VerifyAnalyzerAsyncCs(source, editorConfigText);
-        }
-
-        public static IEnumerable<object[]> MinimumOsAttributeTfmTestData()
-        {
-            yield return new object[] { "", true };
-            yield return new object[] { "build_property.TargetFramework=net5.0", true };
-            yield return new object[] { "build_property.TargetFramework=net472", true };
-            yield return new object[] { "build_property.TargetFramework=net5.0-linux", true };
-            yield return new object[] { "build_property.TargetFramework=net5.0-windows", true };
-            yield return new object[] { "build_property.TargetFramework=net5.0-windows10.1.1.1", false };
-            yield return new object[] { "build_property.TargetFramework=net5.0-windows10.2", false };
-            yield return new object[] { "build_property.TargetFramework=net5.0-windows11.0", false };
-            yield return new object[] { "build_property.TargetFramework=net5.0-windows10.0", true };
-            yield return new object[] { "build_property.TargetFramework=net5.0-windows11.0\nbuild_property.TargetPlatformMinVersion=10.0;", true };
-            yield return new object[] { "build_property.TargetFramework=net5.0-windows10.2\nbuild_property.TargetPlatformMinVersion=10.1;", true };
-            yield return new object[] { "build_property.TargetFramework=net5.0-windows10.1.1.2\nbuild_property.TargetPlatformMinVersion=10.0.0.1;", true };
-            yield return new object[] { "build_property.TargetFramework=net5.0-windows10.2.1\nbuild_property.TargetPlatformMinVersion=9.1.1.1;", true };
-        }
-
-        public static IEnumerable<object[]> ObsoletedRemovedTfmTestData()
-        {
-            yield return new object[] { "", true };
-            yield return new object[] { "build_property.TargetFramework=net5.0", true };
-            yield return new object[] { "build_property.TargetFramework=net472", false }; // because no version part it is 0.0.0.0
-            yield return new object[] { "build_property.TargetFramework=net5.0-linux", true };
-            yield return new object[] { "build_property.TargetFramework=net5.0-windows", true };
-            yield return new object[] { "build_property.TargetFramework=net5.0-windows10.1.1.1", true };
-            yield return new object[] { "build_property.TargetFramework=net5.0-windows10.2", true };
-            yield return new object[] { "build_property.TargetFramework=net5.0-windows11.0", true };
-            yield return new object[] { "build_property.TargetFramework=net5.0-windows10.0", false };
-            yield return new object[] { "build_property.TargetFramework=net5.0-windows11.0\nbuild_property.TargetPlatformMinVersion=10.0;", false };
-            yield return new object[] { "build_property.TargetFramework=net5.0-windows10.2\nbuild_property.TargetPlatformMinVersion=10.1;", false };
-            yield return new object[] { "build_property.TargetFramework=net5.0-windows10.1.1.2\nbuild_property.TargetPlatformMinVersion=10.0.0.1;", false };
-            yield return new object[] { "build_property.TargetFramework=net5.0-windows10.2.1\nbuild_property.TargetPlatformMinVersion=9.1.1.1;", false };
-        }
-
-        [Theory]
-        [MemberData(nameof(ObsoletedRemovedTfmTestData))]
-        public async Task TfmAndTargetPlatformMinVersionWithObsoleteAttribute(string editorConfigText, bool expectDiagnostic)
-        {
-            var invocation = expectDiagnostic ? @"[|M2()|]" : "M2()";
-            var source = $@"
-using System.Runtime.Versioning;
-
-public class Test
-{{
-    public void M1()
-    {{
-        {invocation};
-    }}
-    [ObsoletedInOSPlatform(""Windows10.1.1.1"")]
-    public void M2()
-    {{
-    }}
-}}
-" + MockAttributesSource;
-
-            await VerifyAnalyzerAsyncCs(source, editorConfigText);
         }
 
         private static VerifyCS.Test PopulateTest(string sourceCode)

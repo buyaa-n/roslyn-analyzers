@@ -27,29 +27,35 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
         private struct PlatformAttributeInfo : IEquatable<PlatformAttributeInfo>
         {
             public PlatformAttributeType AttributeType { get; set; }
-            public string OsPlatformName { get; set; }
+            public string PlatformName { get; set; }
             public Version Version { get; set; }
 
-            public static bool TryParseAttributeData(AttributeData osAttribute, out PlatformAttributeInfo parsedAttribute)
+            public static bool TryParsePlatformAttributeInfo(AttributeData osAttribute, out PlatformAttributeInfo parsedAttribute)
             {
                 parsedAttribute = new PlatformAttributeInfo();
                 switch (osAttribute.AttributeClass.Name)
                 {
                     case MinimumOSPlatformAttribute:
-                        parsedAttribute.AttributeType = PlatformAttributeType.MinimumOSPlatformAttribute; break;
+                        parsedAttribute.AttributeType = PlatformAttributeType.MinimumOSPlatformAttribute;
+                        break;
                     case ObsoletedInOSPlatformAttribute:
-                        parsedAttribute.AttributeType = PlatformAttributeType.ObsoletedInOSPlatformAttribute; break;
+                        parsedAttribute.AttributeType = PlatformAttributeType.ObsoletedInOSPlatformAttribute;
+                        break;
                     case RemovedInOSPlatformAttribute:
-                        parsedAttribute.AttributeType = PlatformAttributeType.RemovedInOSPlatformAttribute; break;
+                        parsedAttribute.AttributeType = PlatformAttributeType.RemovedInOSPlatformAttribute;
+                        break;
                     case TargetPlatformAttribute:
-                        parsedAttribute.AttributeType = PlatformAttributeType.TargetPlatformAttribute; break;
+                        parsedAttribute.AttributeType = PlatformAttributeType.TargetPlatformAttribute;
+                        break;
                     default:
-                        parsedAttribute.AttributeType = PlatformAttributeType.None; break;
+                        parsedAttribute.AttributeType = PlatformAttributeType.None;
+                        break;
                 }
 
-                if (!osAttribute.ConstructorArguments[0].IsNull && TryParsePlatformString(osAttribute.ConstructorArguments[0].Value.ToString(), out string platformName, out Version? version))
+                if (osAttribute.ConstructorArguments.Length == 1 && osAttribute.ConstructorArguments[0].Type.SpecialType == SpecialType.System_String &&
+                    !osAttribute.ConstructorArguments[0].IsNull && TryParsePlatformNameAndVersion(osAttribute.ConstructorArguments[0].Value.ToString(), out string platformName, out Version? version))
                 {
-                    parsedAttribute.OsPlatformName = platformName;
+                    parsedAttribute.PlatformName = platformName;
                     parsedAttribute.Version = version;
                     return true;
                 }
@@ -66,30 +72,17 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                 return false;
             }
 
-            public override int GetHashCode() => HashUtilities.Combine(AttributeType.GetHashCode(), OsPlatformName.GetHashCode(), Version.GetHashCode());
+            public override int GetHashCode() => HashUtilities.Combine(AttributeType.GetHashCode(), PlatformName.GetHashCode(), Version.GetHashCode());
 
             public static bool operator ==(PlatformAttributeInfo left, PlatformAttributeInfo right) => left.Equals(right);
 
             public static bool operator !=(PlatformAttributeInfo left, PlatformAttributeInfo right) => !(left == right);
 
             public bool Equals(PlatformAttributeInfo other) =>
-                AttributeType == other.AttributeType && IsOSPlatformsEqual(OsPlatformName, other.OsPlatformName) && Version.Equals(other.Version);
-
-            internal static bool TryParseTfmString(string osString, out PlatformAttributeInfo parsedTfm)
-            {
-                parsedTfm = new PlatformAttributeInfo();
-                parsedTfm.AttributeType = PlatformAttributeType.None;
-
-                if (TryParsePlatformString(osString, out string platformName, out Version? version))
-                {
-                    parsedTfm.OsPlatformName = platformName;
-                    parsedTfm.Version = version;
-                }
-                return parsedTfm.Version != null;
-            }
+                AttributeType == other.AttributeType && IsOSPlatformsEqual(PlatformName, other.PlatformName) && Version.Equals(other.Version);
         }
 
-        private static bool TryParsePlatformString(string osString, out string osPlatformName, [NotNullWhen(true)] out Version? version)
+        private static bool TryParsePlatformNameAndVersion(string osString, out string osPlatformName, [NotNullWhen(true)] out Version? version)
         {
             version = null;
             osPlatformName = string.Empty;
@@ -142,7 +135,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
 
                 if (arguments[0].Value is ILiteralOperation literal && literal.Type.SpecialType == SpecialType.System_String)
                 {
-                    if (literal.ConstantValue.HasValue && TryParsePlatformString(literal.ConstantValue.Value.ToString(), out string platformName, out Version? version))
+                    if (literal.ConstantValue.HasValue && TryParsePlatformNameAndVersion(literal.ConstantValue.Value.ToString(), out string platformName, out Version? version))
                     {
                         info = new RuntimeMethodInfo(invokedPlatformCheckMethod.Name, platformName, version, negated: false);
                         return true;
