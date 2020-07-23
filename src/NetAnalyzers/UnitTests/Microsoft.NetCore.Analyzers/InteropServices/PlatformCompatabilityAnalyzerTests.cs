@@ -345,7 +345,7 @@ namespace Ns
         }
 
         [Fact]
-        public async Task MethodOfOsDependentClassCalledWarns()
+        public async Task OsDependentConstructorOfClassUsedCalledWarns()
         {
             var source = @"
 using System.Runtime.Versioning;
@@ -354,7 +354,36 @@ public class Test
 {
     public void M1()
     {
-        OsDependentClass odc = new OsDependentClass();
+        C instance = [|new C()|];
+        instance.M2();
+    }
+}
+
+public class C
+{
+    [MinimumOSPlatform(""Windows10.1.2.3"")]
+    public C()
+    {
+    }
+    public void M2()
+    {
+    }
+}
+" + MockAttributesSource;
+            await VerifyAnalyzerAsyncCs(source);
+        }
+
+        [Fact]
+        public async Task ConstructorAndMethodOfOsDependentClassCalledWarns()
+        {
+            var source = @"
+using System.Runtime.Versioning;
+
+public class Test
+{
+    public void M1()
+    {
+        OsDependentClass odc = [|new OsDependentClass()|];
         [|odc.M2()|];
     }
 }
@@ -368,6 +397,7 @@ public class OsDependentClass
 " + MockAttributesSource;
             await VerifyAnalyzerAsyncCs(source);
         }
+
 
         /*[Fact] TODO wait until assembly level APIs merged
         public async Task MethodOfOsDependentAssemblyCalledWithoutSuppressionWarns()
@@ -444,9 +474,15 @@ public class OsDependentClass
 " + MockAttributesSource;
 
             if (warn)
-                await VerifyAnalyzerAsyncCs(source, VerifyCS.Diagnostic(PlatformCompatabilityAnalyzer.MinimumOsRule).WithSpan(10, 9, 10, 17).WithArguments("M2", "Windows", "10.1.2.3"));
+            {
+                await VerifyAnalyzerAsyncCs(source,
+                    VerifyCS.Diagnostic(PlatformCompatabilityAnalyzer.MinimumOsRule).WithSpan(9, 32, 9, 54).WithArguments(".ctor", "Windows", "10.1.2.3"),
+                    VerifyCS.Diagnostic(PlatformCompatabilityAnalyzer.MinimumOsRule).WithSpan(10, 9, 10, 17).WithArguments("M2", "Windows", "10.1.2.3"));
+            }
             else
+            {
                 await VerifyAnalyzerAsyncCs(source);
+            }
         }
 
         [Theory]
@@ -476,9 +512,15 @@ public class OsDependentClass
 " + MockAttributesSource;
 
             if (warn)
-                await VerifyAnalyzerAsyncCs(source, VerifyCS.Diagnostic(PlatformCompatabilityAnalyzer.ObsoleteRule).WithSpan(10, 9, 10, 17).WithArguments("M2", "Windows", "10.1.2.3"));
+            {
+                await VerifyAnalyzerAsyncCs(source,
+                    VerifyCS.Diagnostic(PlatformCompatabilityAnalyzer.MinimumOsRule).WithSpan(9, 32, 9, 54).WithArguments(".ctor", "Windows", "10.1.2.3"),
+                    VerifyCS.Diagnostic(PlatformCompatabilityAnalyzer.ObsoleteRule).WithSpan(10, 9, 10, 17).WithArguments("M2", "Windows", "10.1.2.3"));
+            }
             else
+            {
                 await VerifyAnalyzerAsyncCs(source);
+            }
         }
 
         public static IEnumerable<object[]> ObsoletedRemovedAttributeTestData()
@@ -525,9 +567,15 @@ public class OsDependentClass
 " + MockAttributesSource;
 
             if (warn)
-                await VerifyAnalyzerAsyncCs(source, VerifyCS.Diagnostic(PlatformCompatabilityAnalyzer.RemovedRule).WithSpan(10, 9, 10, 17).WithArguments("M2", "Windows", "10.1.2.3"));
+            {
+                await VerifyAnalyzerAsyncCs(source,
+                    VerifyCS.Diagnostic(PlatformCompatabilityAnalyzer.MinimumOsRule).WithSpan(9, 32, 9, 54).WithArguments(".ctor", "Windows", "10.1.2.3"), 
+                    VerifyCS.Diagnostic(PlatformCompatabilityAnalyzer.RemovedRule).WithSpan(10, 9, 10, 17).WithArguments("M2", "Windows", "10.1.2.3"));
+            }
             else
+            {
                 await VerifyAnalyzerAsyncCs(source);
+            }
         }
 
         private static VerifyCS.Test PopulateTest(string sourceCode)
@@ -543,10 +591,13 @@ public class OsDependentClass
 
         private static async Task VerifyAnalyzerAsyncCs(string sourceCode) => await PopulateTest(sourceCode).RunAsync();
 
-        private static async Task VerifyAnalyzerAsyncCs(string sourceCode, DiagnosticResult expectedDiagnostic)
+        private static async Task VerifyAnalyzerAsyncCs(string sourceCode, params DiagnosticResult[] expectedDiagnostics)
         {
             var test = PopulateTest(sourceCode);
-            test.ExpectedDiagnostics.Add(expectedDiagnostic);
+            foreach (DiagnosticResult expectedDiagnostic in expectedDiagnostics)
+            {
+                test.ExpectedDiagnostics.Add(expectedDiagnostic);
+            }
             await test.RunAsync();
         }
 

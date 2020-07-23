@@ -99,7 +99,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
             {
                 AnalyzeInvocationOperation(context.Operation, context, ref platformSpecificOperations);
             }
-            , OperationKind.Invocation, OperationKind.PropertyReference, OperationKind.FieldReference);
+            , OperationKind.Invocation, OperationKind.ObjectCreation, OperationKind.PropertyReference, OperationKind.FieldReference);
 
             context.RegisterOperationBlockEndAction(context =>
             {
@@ -169,7 +169,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                         {
                             if (IsOSPlatformsEqual(attribute.PlatformName, info.PlatformPropertyName))
                             {
-                                if (info.InvokedPlatformCheckMethodName.Equals(s_platformCheckMethodNames[0], StringComparison.InvariantCulture))
+                                if (info.InvokedPlatformCheckMethodName == s_platformCheckMethodNames[0])
                                 {
                                     if (attribute.AttributeType == PlatformAttributeType.MinimumOSPlatformAttribute && AttributeVersionsMatch(attribute.AttributeType, attribute.Version, info.Version))
                                     {
@@ -211,6 +211,10 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
             {
                 operationName = iOperation.TargetMethod.Name;
             }
+            else if (operation is IObjectCreationOperation cOperation)
+            {
+                operationName = cOperation.Constructor.Name;
+            }
             else if (operation is IPropertyReferenceOperation pOperation)
             {
                 operationName = pOperation.Property.Name;
@@ -220,7 +224,8 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                 operationName = fOperation.Field.Name;
             }
 
-            context.ReportDiagnostic(operation.CreateDiagnostic(SelectRule(attribute.AttributeType), operationName, attribute.PlatformName, attribute.Version.ToString()));
+            context.ReportDiagnostic(operation.CreateDiagnostic(SelectRule(attribute.AttributeType), 
+                operationName, attribute.PlatformName, attribute.Version.ToString()));
         }
 
         private static void AnalyzeInvocationOperation(IOperation operation, OperationAnalysisContext context,
@@ -232,6 +237,10 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
             if (operation is IInvocationOperation iOperation)
             {
                 attributes = FindAllPlatformAttributesApplied(iOperation.TargetMethod.GetAttributes(), iOperation.TargetMethod.ContainingType);
+            }
+            else if (operation is IObjectCreationOperation cOperation)
+            {
+                attributes = FindAllPlatformAttributesApplied(cOperation.Constructor.GetAttributes(), cOperation.Constructor.ContainingType);
             }
             else if (operation is IPropertyReferenceOperation pOperation)
             {
@@ -326,7 +335,8 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                 var current = parent.GetAttributes();
                 foreach (var attribute in current)
                 {
-                    if (s_osPlatformAttributes.Contains(attribute.AttributeClass.Name) && !TargetPlatformAttribute.Equals(attribute.AttributeClass.Name, StringComparison.InvariantCulture))
+                    if (s_osPlatformAttributes.Contains(attribute.AttributeClass.Name) &&
+                        TargetPlatformAttribute != attribute.AttributeClass.Name)
                     {
                         builder.Add(attribute);
                     }
