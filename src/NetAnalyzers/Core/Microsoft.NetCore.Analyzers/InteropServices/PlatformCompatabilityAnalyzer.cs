@@ -20,6 +20,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
         internal const string RuleId = "CA1416";
         private static readonly ImmutableArray<string> s_platformCheckMethodNames = ImmutableArray.Create("IsOSPlatformOrLater", "IsOSPlatformEarlierThan");
         private static readonly ImmutableArray<string> s_osPlatformAttributes = ImmutableArray.Create(MinimumOSPlatformAttribute, ObsoletedInOSPlatformAttribute, RemovedInOSPlatformAttribute);
+
         private static readonly LocalizableString s_localizableTitle = new LocalizableResourceString(nameof(MicrosoftNetCoreAnalyzersResources.PlatformCompatabilityCheckTitle), MicrosoftNetCoreAnalyzersResources.ResourceManager, typeof(MicrosoftNetCoreAnalyzersResources));
         private static readonly LocalizableString s_localizableAddedMessage = new LocalizableResourceString(nameof(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityCheckAddedMessage), MicrosoftNetCoreAnalyzersResources.ResourceManager, typeof(MicrosoftNetCoreAnalyzersResources));
         private static readonly LocalizableString s_localizableObsoleteMessage = new LocalizableResourceString(nameof(MicrosoftNetCoreAnalyzersResources.PlatformCompatabilityCheckObsoleteMessage), MicrosoftNetCoreAnalyzersResources.ResourceManager, typeof(MicrosoftNetCoreAnalyzersResources));
@@ -151,7 +152,8 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
             });
         }
 
-        private static void ReportDiangosticsIfNotGuarded(IOperation operation, ImmutableArray<PlatformAttributeInfo> attributes, GlobalFlowStateAnalysisValueSet value, OperationBlockAnalysisContext context)
+        private static void ReportDiangosticsIfNotGuarded(IOperation operation, ImmutableArray<PlatformAttributeInfo> attributes,
+            GlobalFlowStateAnalysisValueSet value, OperationBlockAnalysisContext context)
         {
             PlatformAttributeInfo attribute = attributes.FirstOrDefault();
             if (value.Kind == GlobalFlowStateAnalysisValueSetKind.Empty || value.Kind == GlobalFlowStateAnalysisValueSetKind.Unset)
@@ -171,15 +173,17 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                             {
                                 if (info.InvokedPlatformCheckMethodName == s_platformCheckMethodNames[0])
                                 {
-                                    if (attribute.AttributeType == PlatformAttributeType.MinimumOSPlatformAttribute && AttributeVersionsMatch(attribute.AttributeType, attribute.Version, info.Version))
+                                    if (attribute.AttributeType == PlatformAttributeType.MinimumOSPlatformAttribute &&
+                                        AttributeVersionsMatch(attribute.AttributeType, attribute.Version, info.Version))
                                     {
                                         guarded = true;
                                     }
                                 }
                                 else
                                 {
-                                    if ((attribute.AttributeType == PlatformAttributeType.ObsoletedInOSPlatformAttribute || attribute.AttributeType == PlatformAttributeType.RemovedInOSPlatformAttribute)
-                                            && AttributeVersionsMatch(attribute.AttributeType, attribute.Version, info.Version))
+                                    if ((attribute.AttributeType == PlatformAttributeType.ObsoletedInOSPlatformAttribute ||
+                                        attribute.AttributeType == PlatformAttributeType.RemovedInOSPlatformAttribute) &&
+                                        AttributeVersionsMatch(attribute.AttributeType, attribute.Version, info.Version))
                                     {
                                         guarded = true;
                                     }
@@ -224,7 +228,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                 operationName = fOperation.Field.Name;
             }
 
-            context.ReportDiagnostic(operation.CreateDiagnostic(SelectRule(attribute.AttributeType), 
+            context.ReportDiagnostic(operation.CreateDiagnostic(SelectRule(attribute.AttributeType),
                 operationName, attribute.PlatformName, attribute.Version.ToString()));
         }
 
@@ -359,7 +363,8 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                         {
                             if (PlatformAttributeInfo.TryParsePlatformAttributeInfo(attribute, out PlatformAttributeInfo parsedAttribute))
                             {
-                                if (IsOSPlatformsEqual(diagnosingAttribute.PlatformName, parsedAttribute.PlatformName) && AttributeVersionsMatch(diagnosingAttribute, parsedAttribute))
+                                if (IsOSPlatformsEqual(diagnosingAttribute.PlatformName, parsedAttribute.PlatformName) &&
+                                    AttributeVersionsMatch(diagnosingAttribute, parsedAttribute))
                                 {
                                     return true;
                                 }

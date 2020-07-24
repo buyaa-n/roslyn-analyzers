@@ -1,5 +1,6 @@
 ﻿// Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license information.
 
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis.Testing;
@@ -10,6 +11,25 @@ using VerifyCS = Test.Utilities.CSharpCodeFixVerifier<
 
 namespace Microsoft.NetCore.Analyzers.InteropServices.UnitTests
 {
+    public class Test
+    {
+        public void M1()
+        {
+            void Test() => M2();
+
+            Test();
+
+            Action action = () =>
+            {
+                M2();
+            };
+        }
+
+        //[MinimumOSPlatform(""Windows10.1.2.3"")]
+        public void M2()
+        {
+        }
+    }
     public partial class PlatformCompatabilityAnalyzerTests
     {
         [Fact]
@@ -390,6 +410,118 @@ public class Test
 [MinimumOSPlatform(""Windows10.1.2.3"")]
 public class OsDependentClass
 {
+    public void M2()
+    {
+    }
+}
+" + MockAttributesSource;
+            await VerifyAnalyzerAsyncCs(source);
+        }
+
+        [Fact]
+        public async Task LocalFunctionCallsOsDependentMemberWarns()
+        {
+            var source = @"
+using System.Runtime.Versioning;
+
+public class Test
+{
+    public void M1()
+    {
+        void Test()
+        {
+            [|M2()|];
+        }
+        Test();
+    }
+
+    [MinimumOSPlatform(""Windows10.1.2.3"")]
+    public void M2()
+    {
+    }
+}
+" + MockAttributesSource;
+            await VerifyAnalyzerAsyncCs(source);
+        }
+
+        [Fact]
+        public async Task LocalGuardedFunctionCallsOsDependentMemberNotWarns()
+        {
+            var source = @"
+using System.Runtime.Versioning;
+
+public class Test
+{
+    [MinimumOSPlatform(""Windows10.2"")]
+    public void M1()
+    {
+        void Test()
+        {
+            M2();
+        }
+        Test();
+    }
+
+    [MinimumOSPlatform(""Windows10.1.2.3"")]
+    public void M2()
+    {
+    }
+}
+" + MockAttributesSource;
+            await VerifyAnalyzerAsyncCs(source);
+        }
+
+        [Fact]
+        public async Task LambdaCallsOsDependentMemberWarns()
+        {
+            var source = @"
+using System.Runtime.Versioning;
+using System;
+
+public class Test
+{
+    public void M1()
+    {
+        void Test() => [|M2()|];
+        Test();
+
+        Action action = () =>
+        {
+            [|M2()|];
+        };
+    }
+
+    [MinimumOSPlatform(""Windows10.1.2.3"")]
+    public void M2()
+    {
+    }
+}
+" + MockAttributesSource;
+            await VerifyAnalyzerAsyncCs(source);
+        }
+
+        [Fact]
+        public async Task AttributedLambdaCallsOsDependentMemberNotWarn()
+        {
+            var source = @"
+using System.Runtime.Versioning;
+using System;
+
+public class Test
+{
+    [MinimumOSPlatform(""Windows10.13"")]
+    public void M1()
+    {
+        void Test() => M2();
+        Test();
+
+        Action action = () =>
+        {
+            M2();
+        };
+    }
+
+    [MinimumOSPlatform(""Windows10.1.2.3"")]
     public void M2()
     {
     }
