@@ -14,7 +14,7 @@ using Microsoft.CodeAnalysis.Operations;
 
 namespace Microsoft.NetCore.Analyzers.InteropServices
 {
-    [DiagnosticAnalyzer(LanguageNames.CSharp)]
+    [DiagnosticAnalyzer(LanguageNames.CSharp, LanguageNames.VisualBasic)]
     public sealed partial class PlatformCompatabilityAnalyzer : DiagnosticAnalyzer
     {
         internal const string RuleId = "CA1416";
@@ -100,7 +100,8 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
             {
                 AnalyzeInvocationOperation(context.Operation, context, ref platformSpecificOperations);
             }
-            , OperationKind.Invocation, OperationKind.ObjectCreation, OperationKind.PropertyReference, OperationKind.FieldReference);
+            , OperationKind.DelegateCreation, OperationKind.EventReference, OperationKind.FieldReference,
+            OperationKind.Invocation, OperationKind.ObjectCreation, OperationKind.PropertyReference);
 
             context.RegisterOperationBlockEndAction(context =>
             {
@@ -132,13 +133,35 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                     foreach (var platformSpecificOperation in platformSpecificOperations)
                     {
                         var value = analysisResult[platformSpecificOperation.Key.Kind, platformSpecificOperation.Key.Syntax];
+                        PlatformAttributeInfo attribute = platformSpecificOperation.Value.FirstOrDefault();
 
                         if (value.Kind == GlobalFlowStateAnalysisValueSetKind.Unknown)
                         {
-                            continue;
+                            if (platformSpecificOperation.Key.TryGetContainingLocalOrLambdaFunctionSymbol(out var containingSymbol))
+                            {
+                                var localResult = analysisResult.TryGetInterproceduralResultByDefinition(containingSymbol);
+                                if (localResult != null)
+                                {
+                                    var localValue = localResult[platformSpecificOperation.Key.Kind, platformSpecificOperation.Key.Syntax];
+                                    if (localValue.Kind == GlobalFlowStateAnalysisValueSetKind.Known)
+                                    {
+                                        if (IsKnownValueGuarded(attribute, localValue))
+                                        {
+                                            continue;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        else if (value.Kind == GlobalFlowStateAnalysisValueSetKind.Known)
+                        {
+                            if (IsKnownValueGuarded(attribute, value))
+                            {
+                                continue;
+                            }
                         }
 
-                        ReportDiangosticsIfNotGuarded(platformSpecificOperation.Key, platformSpecificOperation.Value, value, context);
+                        ReportDiagnostics(platformSpecificOperation.Key, attribute, context);
                     }
                 }
                 finally
@@ -152,51 +175,38 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
             });
         }
 
-        private static void ReportDiangosticsIfNotGuarded(IOperation operation, ImmutableArray<PlatformAttributeInfo> attributes,
-            GlobalFlowStateAnalysisValueSet value, OperationBlockAnalysisContext context)
+        private static bool IsKnownValueGuarded(PlatformAttributeInfo attribute, GlobalFlowStateAnalysisValueSet value)
         {
-            PlatformAttributeInfo attribute = attributes.FirstOrDefault();
-            if (value.Kind == GlobalFlowStateAnalysisValueSetKind.Empty || value.Kind == GlobalFlowStateAnalysisValueSetKind.Unset)
+            foreach (var analysisValue in value.AnalysisValues)
             {
-                ReportDiagnostics(operation, attribute, context);
-            }
-            else
-            {
-                bool guarded = false;
-                foreach (var analysisValue in value.AnalysisValues)
+                if (analysisValue is RuntimeMethodValue info)
                 {
-                    if (analysisValue is RuntimeMethodInfo info)
+                    if (!info.Negated)
                     {
-                        if (!info.Negated)
+                        if (IsOSPlatformsEqual(attribute.PlatformName, info.PlatformPropertyName))
                         {
-                            if (IsOSPlatformsEqual(attribute.PlatformName, info.PlatformPropertyName))
+                            if (info.InvokedPlatformCheckMethodName == s_platformCheckMethodNames[0])
                             {
-                                if (info.InvokedPlatformCheckMethodName == s_platformCheckMethodNames[0])
+                                if (attribute.AttributeType == PlatformAttributeType.MinimumOSPlatformAttribute &&
+                                    AttributeVersionsMatch(attribute.AttributeType, attribute.Version, info.Version))
                                 {
-                                    if (attribute.AttributeType == PlatformAttributeType.MinimumOSPlatformAttribute &&
-                                        AttributeVersionsMatch(attribute.AttributeType, attribute.Version, info.Version))
-                                    {
-                                        guarded = true;
-                                    }
+                                    return true;
                                 }
-                                else
+                            }
+                            else
+                            {
+                                if ((attribute.AttributeType == PlatformAttributeType.ObsoletedInOSPlatformAttribute ||
+                                    attribute.AttributeType == PlatformAttributeType.RemovedInOSPlatformAttribute) &&
+                                    AttributeVersionsMatch(attribute.AttributeType, attribute.Version, info.Version))
                                 {
-                                    if ((attribute.AttributeType == PlatformAttributeType.ObsoletedInOSPlatformAttribute ||
-                                        attribute.AttributeType == PlatformAttributeType.RemovedInOSPlatformAttribute) &&
-                                        AttributeVersionsMatch(attribute.AttributeType, attribute.Version, info.Version))
-                                    {
-                                        guarded = true;
-                                    }
+                                    return true;
                                 }
                             }
                         }
                     }
                 }
-                if (!guarded)
-                {
-                    ReportDiagnostics(operation, attribute, context);
-                }
             }
+            return false;
         }
 
         private static void ReportDiagnosticsForAll(PooledDictionary<IOperation, ImmutableArray<PlatformAttributeInfo>> platformSpecificOperations, OperationBlockAnalysisContext context)
@@ -227,6 +237,15 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
             {
                 operationName = fOperation.Field.Name;
             }
+            if (operation is IDelegateCreationOperation dOperation)
+            {
+                if (dOperation.Target is IMethodReferenceOperation mrOperation)
+                    operationName = mrOperation.Method.Name;
+            }
+            else if (operation is IEventReferenceOperation eOperation)
+            {
+                operationName = eOperation.Event.Name;
+            }
 
             context.ReportDiagnostic(operation.CreateDiagnostic(SelectRule(attribute.AttributeType),
                 operationName, attribute.PlatformName, attribute.Version.ToString()));
@@ -255,6 +274,15 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                 if (!IsWithinConditionalOperation(operation))
                     attributes = FindAllPlatformAttributesApplied(fOperation.Field.GetAttributes(), fOperation.Field.ContainingType);
             }
+            else if (operation is IDelegateCreationOperation dOperation)
+            {
+                if (dOperation.Target is IMethodReferenceOperation mrOperation)
+                    attributes = FindAllPlatformAttributesApplied(mrOperation.Method.GetAttributes(), mrOperation.Method.ContainingType);
+            }
+            else if (operation is IEventReferenceOperation eOperation)
+            {
+                attributes = FindAllPlatformAttributesApplied(eOperation.Event.GetAttributes(), eOperation.Event.ContainingType);
+            }
 
             if (attributes != null)
             {
@@ -277,7 +305,8 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
         }
 
         private static bool IsWithinConditionalOperation(IOperation pOperation) =>
-            pOperation.ConstantValue.HasValue && pOperation.Parent is IBinaryOperation bo &&
+            pOperation.ConstantValue.HasValue &&
+            pOperation.Parent is IBinaryOperation bo &&
             (bo.OperatorKind == BinaryOperatorKind.Equals ||
             bo.OperatorKind == BinaryOperatorKind.NotEquals ||
             bo.OperatorKind == BinaryOperatorKind.GreaterThan ||
@@ -313,14 +342,6 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
             if (attributeType == PlatformAttributeType.ObsoletedInOSPlatformAttribute)
                 return ObsoleteRule;
             return RemovedRule;
-        }
-
-        private static PlatformAttributeInfo CreateWindowsOnlyPlatformInfo()
-        {
-            var platformInfo = new PlatformAttributeInfo();
-            platformInfo.Version = new Version(7, 0);
-            platformInfo.PlatformName = Windows;
-            return platformInfo;
         }
 
         private static AttributeData[] FindAllPlatformAttributesApplied(ImmutableArray<AttributeData> immediateAttributes, INamedTypeSymbol parent)

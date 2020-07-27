@@ -36,7 +36,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
 
                 if (_platformCheckMethods.Contains(method.OriginalDefinition) && !visitedArguments.IsEmpty)
                 {
-                    return RuntimeMethodInfo.TryDecode(method, visitedArguments, DataFlowAnalysisContext.ValueContentAnalysisResultOpt, _osPlatformType, out var platformInfo) ?
+                    return RuntimeMethodValue.TryDecode(method, visitedArguments, DataFlowAnalysisContext.ValueContentAnalysisResultOpt, _osPlatformType, out var platformInfo) ?
                         new GlobalFlowStateAnalysisValueSet(platformInfo) :
                         GlobalFlowStateAnalysisValueSet.Unknown;
                 }
@@ -55,6 +55,31 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                 var value = base.VisitFieldReference(operation, argument);
                 return GetValueOrDefault(value);
             }
+
+            public override GlobalFlowStateAnalysisValueSet VisitObjectCreation(IObjectCreationOperation operation, object? argument)
+            {
+                var value = base.VisitObjectCreation(operation, argument);
+                return GetValueOrDefault(value);
+            }
+
+            public override GlobalFlowStateAnalysisValueSet VisitEventReference(IEventReferenceOperation operation, object? argument)
+            {
+                var value = base.VisitEventReference(operation, argument);
+                return GetValueOrDefault(value);
+            }
+
+            /*public override GlobalFlowStateAnalysisValueSet VisitInvocation_Lambda(
+                IFlowAnonymousFunctionOperation lambda,
+                ImmutableArray<IArgumentOperation> visitedArguments,
+                IOperation originalOperation,
+                GlobalFlowStateAnalysisValueSet defaultValue)
+            {
+                var value = base.VisitInvocation_Lambda(lambda, visitedArguments, originalOperation, defaultValue);
+                return GetValueOrDefault(value);
+                ControlFlowGraph? getCfg() => DataFlowAnalysisContext.GetAnonymousFunctionControlFlowGraph(lambda);
+                return PerformInterproceduralAnalysis(getCfg, lambda.Symbol, instanceReceiver: null, arguments: visitedArguments,
+                    originalOperation: originalOperation, defaultValue: defaultValue, isLambdaOrLocalFunction: true);
+            }*/
         }
     }
 }

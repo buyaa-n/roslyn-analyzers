@@ -1,6 +1,5 @@
 ﻿// Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license information.
 
-using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis.Testing;
@@ -11,25 +10,6 @@ using VerifyCS = Test.Utilities.CSharpCodeFixVerifier<
 
 namespace Microsoft.NetCore.Analyzers.InteropServices.UnitTests
 {
-    public class Test
-    {
-        public void M1()
-        {
-            void Test() => M2();
-
-            Test();
-
-            Action action = () =>
-            {
-                M2();
-            };
-        }
-
-        //[MinimumOSPlatform(""Windows10.1.2.3"")]
-        public void M2()
-        {
-        }
-    }
     public partial class PlatformCompatabilityAnalyzerTests
     {
         [Fact]
@@ -81,11 +61,12 @@ public class Test
         ObsoletedWithNullString();
         RemovedWithEmptyString();
     }
-    [MinimumOSPlatform(""Windows10"")]
+
+    [MinimumOSPlatform(""Windows10"")] // ArgumentException
     public void Windows10()
     {
     }
-    [MinimumOSPlatform(""Windows1.2.3.4.5"")]
+    [MinimumOSPlatform(""Windows1.2.3.4.5"")] // ArgumentException
     public void Windows1_2_3_4_5()
     {
     }
@@ -97,7 +78,7 @@ public class Test
     public void ObsoletedLinuxStar4_1()
     {
     }
-    [ObsoletedInOSPlatform(null)]
+    [ObsoletedInOSPlatform(null)] // ArgumentNullException (OsPlatform.Create)
     public void ObsoletedWithNullString()
     {
     }
@@ -105,7 +86,7 @@ public class Test
     public void RemovedLinu4_1()
     {
     }
-    [RemovedInOSPlatform("""")]
+    [RemovedInOSPlatform("""")] // System.ArgumentException (OsPlatform.Create)
     public void RemovedWithEmptyString()
     {
     }
@@ -152,7 +133,7 @@ public class Test
 
         [Theory]
         [MemberData(nameof(Create_AtrrbiuteProperty_WithCondtions))]
-        public async Task OsDependentPropertyConditionalCheckNotWarns(string attribute, string property, string condition, string setter, string getter)
+        public async Task OsDependentPropertyConditionalCheckWarns(string attribute, string property, string condition, string setter, string getter)
         {
             var source = @"
 using System.Runtime.Versioning;
@@ -530,6 +511,61 @@ public class Test
             await VerifyAnalyzerAsyncCs(source);
         }
 
+        [Fact]
+        public async Task OsDependentEventAccessedWarns()
+        {
+            var source = @"
+using System.Runtime.Versioning;
+
+public class Test
+{
+    public delegate void Del();
+
+    [MinimumOSPlatform(""Windows10.1.2.3"")]
+    public event Del SampleEvent;
+
+    public void M1()
+    {
+        [|SampleEvent|] += M3;
+        M2();
+    }
+
+    public void M2()
+    {
+        [|SampleEvent|]?.Invoke();
+    }
+
+    public void M3()
+    {
+    }
+}
+" + MockAttributesSource;
+            await VerifyAnalyzerAsyncCs(source);
+        }
+
+        [Fact]
+        public async Task OsDependentMethodAssignedToDelegateWarns()
+        {
+            var source = @"
+using System.Runtime.Versioning;
+
+public class Test
+{
+    public delegate void Del(); // The attribute not supported on delegates, so no tets for that
+
+    [MinimumOSPlatform(""Windows10.1.2.3"")]
+    public void DelegateMethod()
+    {
+    }
+    public void M1()
+    {
+        Del handler = [|DelegateMethod|];
+        handler(); // assume it shouldn't warn here
+    }
+}
+" + MockAttributesSource;
+            await VerifyAnalyzerAsyncCs(source);
+        }
 
         /*[Fact] TODO wait until assembly level APIs merged
         public async Task MethodOfOsDependentAssemblyCalledWithoutSuppressionWarns()
@@ -701,7 +737,7 @@ public class OsDependentClass
             if (warn)
             {
                 await VerifyAnalyzerAsyncCs(source,
-                    VerifyCS.Diagnostic(PlatformCompatabilityAnalyzer.MinimumOsRule).WithSpan(9, 32, 9, 54).WithArguments(".ctor", "Windows", "10.1.2.3"), 
+                    VerifyCS.Diagnostic(PlatformCompatabilityAnalyzer.MinimumOsRule).WithSpan(9, 32, 9, 54).WithArguments(".ctor", "Windows", "10.1.2.3"),
                     VerifyCS.Diagnostic(PlatformCompatabilityAnalyzer.RemovedRule).WithSpan(10, 9, 10, 17).WithArguments("M2", "Windows", "10.1.2.3"));
             }
             else
@@ -710,7 +746,7 @@ public class OsDependentClass
             }
         }
 
-        private static VerifyCS.Test PopulateTest(string sourceCode)
+        private static VerifyCS.Test PopulateTestCs(string sourceCode)
         {
             return new VerifyCS.Test
             {
@@ -721,11 +757,11 @@ public class OsDependentClass
             };
         }
 
-        private static async Task VerifyAnalyzerAsyncCs(string sourceCode) => await PopulateTest(sourceCode).RunAsync();
+        private static async Task VerifyAnalyzerAsyncCs(string sourceCode) => await PopulateTestCs(sourceCode).RunAsync();
 
         private static async Task VerifyAnalyzerAsyncCs(string sourceCode, params DiagnosticResult[] expectedDiagnostics)
         {
-            var test = PopulateTest(sourceCode);
+            var test = PopulateTestCs(sourceCode);
             foreach (DiagnosticResult expectedDiagnostic in expectedDiagnostics)
             {
                 test.ExpectedDiagnostics.Add(expectedDiagnostic);
@@ -735,7 +771,7 @@ public class OsDependentClass
 
         private static async Task VerifyAnalyzerAsyncCs(string sourceCode, string additionalFiles)
         {
-            var test = PopulateTest(sourceCode);
+            var test = PopulateTestCs(sourceCode);
             test.TestState.AdditionalFiles.Add((".editorconfig", additionalFiles));
             await test.RunAsync();
         }

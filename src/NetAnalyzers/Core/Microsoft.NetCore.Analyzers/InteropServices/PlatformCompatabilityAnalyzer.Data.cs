@@ -106,9 +106,9 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
             return false;
         }
 
-        private struct RuntimeMethodInfo : IAbstractAnalysisValue, IEquatable<RuntimeMethodInfo>
+        private struct RuntimeMethodValue : IAbstractAnalysisValue, IEquatable<RuntimeMethodValue>
         {
-            private RuntimeMethodInfo(string invokedPlatformCheckMethodName, string platformPropertyName, Version version, bool negated)
+            private RuntimeMethodValue(string invokedPlatformCheckMethodName, string platformPropertyName, Version version, bool negated)
             {
                 InvokedPlatformCheckMethodName = invokedPlatformCheckMethodName ?? throw new ArgumentNullException(nameof(invokedPlatformCheckMethodName));
                 PlatformPropertyName = platformPropertyName ?? throw new ArgumentNullException(nameof(platformPropertyName));
@@ -122,14 +122,14 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
             public bool Negated { get; }
 
             public IAbstractAnalysisValue GetNegatedValue()
-                => new RuntimeMethodInfo(InvokedPlatformCheckMethodName, PlatformPropertyName, Version, !Negated);
+                => new RuntimeMethodValue(InvokedPlatformCheckMethodName, PlatformPropertyName, Version, !Negated);
 
             public static bool TryDecode(
                 IMethodSymbol invokedPlatformCheckMethod,
                 ImmutableArray<IArgumentOperation> arguments,
                 ValueContentAnalysisResult? valueContentAnalysisResult,
                 INamedTypeSymbol osPlatformType,
-                [NotNullWhen(returnValue: true)] out RuntimeMethodInfo? info)
+                [NotNullWhen(returnValue: true)] out RuntimeMethodValue? info)
             {
                 Debug.Assert(!arguments.IsEmpty);
 
@@ -137,7 +137,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                 {
                     if (literal.ConstantValue.HasValue && TryParsePlatformNameAndVersion(literal.ConstantValue.Value.ToString(), out string platformName, out Version? version))
                     {
-                        info = new RuntimeMethodInfo(invokedPlatformCheckMethod.Name, platformName, version, negated: false);
+                        info = new RuntimeMethodValue(invokedPlatformCheckMethod.Name, platformName, version, negated: false);
                         return true;
                     }
                 }
@@ -150,7 +150,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                     return false;
                 }
 
-                info = new RuntimeMethodInfo(invokedPlatformCheckMethod.Name, osPlatformName, osVersion, negated: false);
+                info = new RuntimeMethodValue(invokedPlatformCheckMethod.Name, osPlatformName, osVersion, negated: false);
                 return true;
             }
 
@@ -236,27 +236,27 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                 return result;
             }
 
-            public bool Equals(RuntimeMethodInfo other)
+            public bool Equals(RuntimeMethodValue other)
                 => InvokedPlatformCheckMethodName.Equals(other.InvokedPlatformCheckMethodName, StringComparison.OrdinalIgnoreCase) &&
                     PlatformPropertyName.Equals(other.PlatformPropertyName, StringComparison.OrdinalIgnoreCase) &&
                     Version.Equals(other.Version) &&
                     Negated == other.Negated;
 
             public override bool Equals(object obj)
-                => obj is RuntimeMethodInfo otherInfo && Equals(otherInfo);
+                => obj is RuntimeMethodValue otherInfo && Equals(otherInfo);
 
             public override int GetHashCode()
                 => HashUtilities.Combine(InvokedPlatformCheckMethodName.GetHashCode(), PlatformPropertyName.GetHashCode(), Version.GetHashCode(), Negated.GetHashCode());
 
             bool IEquatable<IAbstractAnalysisValue>.Equals(IAbstractAnalysisValue other)
-                => other is RuntimeMethodInfo otherInfo && Equals(otherInfo);
+                => other is RuntimeMethodValue otherInfo && Equals(otherInfo);
 
-            public static bool operator ==(RuntimeMethodInfo left, RuntimeMethodInfo right)
+            public static bool operator ==(RuntimeMethodValue left, RuntimeMethodValue right)
             {
                 return left.Equals(right);
             }
 
-            public static bool operator !=(RuntimeMethodInfo left, RuntimeMethodInfo right)
+            public static bool operator !=(RuntimeMethodValue left, RuntimeMethodValue right)
             {
                 return !(left == right);
             }
