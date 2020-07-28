@@ -67,19 +67,6 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                 var value = base.VisitEventReference(operation, argument);
                 return GetValueOrDefault(value);
             }
-
-            /*public override GlobalFlowStateAnalysisValueSet VisitInvocation_Lambda(
-                IFlowAnonymousFunctionOperation lambda,
-                ImmutableArray<IArgumentOperation> visitedArguments,
-                IOperation originalOperation,
-                GlobalFlowStateAnalysisValueSet defaultValue)
-            {
-                var value = base.VisitInvocation_Lambda(lambda, visitedArguments, originalOperation, defaultValue);
-                return GetValueOrDefault(value);
-                ControlFlowGraph? getCfg() => DataFlowAnalysisContext.GetAnonymousFunctionControlFlowGraph(lambda);
-                return PerformInterproceduralAnalysis(getCfg, lambda.Symbol, instanceReceiver: null, arguments: visitedArguments,
-                    originalOperation: originalOperation, defaultValue: defaultValue, isLambdaOrLocalFunction: true);
-            }*/
         }
     }
 }

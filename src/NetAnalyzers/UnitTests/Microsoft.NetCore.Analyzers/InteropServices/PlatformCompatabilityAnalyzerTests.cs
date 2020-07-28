@@ -8,6 +8,10 @@ using VerifyCS = Test.Utilities.CSharpCodeFixVerifier<
     Microsoft.NetCore.Analyzers.InteropServices.PlatformCompatabilityAnalyzer,
     Microsoft.CodeAnalysis.Testing.EmptyCodeFixProvider>;
 
+using VerifyVB = Test.Utilities.VisualBasicCodeFixVerifier<
+    Microsoft.NetCore.Analyzers.InteropServices.PlatformCompatabilityAnalyzer,
+    Microsoft.CodeAnalysis.Testing.EmptyCodeFixProvider>;
+
 namespace Microsoft.NetCore.Analyzers.InteropServices.UnitTests
 {
     public partial class PlatformCompatabilityAnalyzerTests
@@ -15,7 +19,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices.UnitTests
         [Fact]
         public async Task OsDependentMethodsCalledWarns()
         {
-            var source = @"
+            var csSource = @"
 using System.Runtime.Versioning;
 
 public class Test
@@ -39,8 +43,33 @@ public class Test
     {
     }
 }
-" + MockAttributesSource;
-            await VerifyAnalyzerAsyncCs(source);
+" + MockAttributesCsSource;
+            await VerifyAnalyzerAsyncCs(csSource);
+
+            var vbSource = @"
+Imports System.Runtime.Versioning
+
+Public Class Test
+    Public Sub M1()
+        [|WindowsOnly()|]
+        [|Obsoleted()|]
+        [|Removed()|]
+    End Sub
+
+    <MinimumOSPlatform(""Windows10.1.1.1"")>
+    Public Sub WindowsOnly()
+    End Sub
+
+    <ObsoletedInOSPlatform(""Linux4.1"")>
+    Public Sub Obsoleted()
+    End Sub
+
+    <RemovedInOSPlatform(""Linux4.1"")>
+    Public Sub Removed()
+    End Sub
+End Class
+" + MockAttributesVbSource;
+            await VerifyAnalyzerAsyncVb(vbSource);
         }
 
         [Fact]
@@ -62,11 +91,11 @@ public class Test
         RemovedWithEmptyString();
     }
 
-    [MinimumOSPlatform(""Windows10"")] // ArgumentException
+    [MinimumOSPlatform(""Windows10"")]
     public void Windows10()
     {
     }
-    [MinimumOSPlatform(""Windows1.2.3.4.5"")] // ArgumentException
+    [MinimumOSPlatform(""Windows1.2.3.4.5"")]
     public void Windows1_2_3_4_5()
     {
     }
@@ -78,7 +107,7 @@ public class Test
     public void ObsoletedLinuxStar4_1()
     {
     }
-    [ObsoletedInOSPlatform(null)] // ArgumentNullException (OsPlatform.Create)
+    [ObsoletedInOSPlatform(null)]
     public void ObsoletedWithNullString()
     {
     }
@@ -86,12 +115,12 @@ public class Test
     public void RemovedLinu4_1()
     {
     }
-    [RemovedInOSPlatform("""")] // System.ArgumentException (OsPlatform.Create)
+    [RemovedInOSPlatform("""")]
     public void RemovedWithEmptyString()
     {
     }
 }
-" + MockAttributesSource;
+" + MockAttributesCsSource;
             await VerifyAnalyzerAsyncCs(source);
         }
 
@@ -127,7 +156,7 @@ public class Test
         return option;
     }
 }
-" + MockAttributesSource;
+" + MockAttributesCsSource;
             await VerifyAnalyzerAsyncCs(source);
         }
 
@@ -155,7 +184,7 @@ public class Test
         return option;
     }
 }
-" + MockAttributesSource;
+" + MockAttributesCsSource;
             await VerifyAnalyzerAsyncCs(source);
         }
 
@@ -195,7 +224,7 @@ public enum PlatformEnum
     Linux48,
     NoPlatform
 }
-" + MockAttributesSource;
+" + MockAttributesCsSource;
             await VerifyAnalyzerAsyncCs(source);
         }
 
@@ -230,8 +259,34 @@ public enum PlatformEnum
     Linux48,
     NoPlatform
 }
-" + MockAttributesSource;
+" + MockAttributesCsSource;
             await VerifyAnalyzerAsyncCs(source);
+
+            var vbSource = @"
+Imports System.Runtime.Versioning
+
+Public Class Test2
+    Public Sub M1()
+        Dim val As PlatformEnum = [|PlatformEnum.Windows10|]
+        If val = [|PlatformEnum.Windows10|] Then Return
+        M2([|PlatformEnum.Windows10|])
+        M2([|PlatformEnum.Linux48|])
+        M2(PlatformEnum.NoPlatform)
+    End Sub
+
+    Public Sub M2(ByVal [option] As PlatformEnum)
+    End Sub
+End Class
+
+Public Enum PlatformEnum
+    <MinimumOSPlatform(""Windows10.0"")>
+    Windows10
+    < MinimumOSPlatform(""Linux4.8"") >
+    Linux48
+    NoPlatform
+End Enum
+" + MockAttributesVbSource;
+            await VerifyAnalyzerAsyncVb(vbSource);
         }
 
         [Fact]
@@ -264,11 +319,11 @@ public class Test
         return option;
     }
 }
-" + MockAttributesSource;
+" + MockAttributesCsSource;
             await VerifyAnalyzerAsyncCs(source);
         }
 
-        /*[Fact] TODO: test with assembly level attribute
+        /*[Fact] TODO: enable the test when preview 8 consumed
         public async Task MethodWithTargetPlatrofrmAttributeDoesNotWarn()
         {
             var source = @"
@@ -310,7 +365,7 @@ public class B
     {
     }
 }
-" + MockAttributesSource;
+" + MockAttributesCsSource;
             await VerifyAnalyzerAsyncCs(source);
         }
 
@@ -340,9 +395,30 @@ namespace Ns
         }
     }
 }
-" + MockAttributesSource;
-
+" + MockAttributesCsSource;
             await VerifyAnalyzerAsyncCs(source);
+
+            var vbSource = @"
+Imports System.Runtime.Versioning
+Imports Ns
+
+Public Class Test
+    Private field As B = New B()
+
+    Public Sub M1()
+        [|field.M2()|]
+    End Sub
+End Class
+
+Namespace Ns
+    Public Class B
+        <MinimumOSPlatform(""Windows10.1.1.1"")>
+        Public Sub M2()
+        End Sub
+    End Class
+End Namespace
+" + MockAttributesVbSource;
+            await VerifyAnalyzerAsyncVb(vbSource);
         }
 
         [Fact]
@@ -370,7 +446,7 @@ public class C
     {
     }
 }
-" + MockAttributesSource;
+" + MockAttributesCsSource;
             await VerifyAnalyzerAsyncCs(source);
         }
 
@@ -395,8 +471,26 @@ public class OsDependentClass
     {
     }
 }
-" + MockAttributesSource;
+" + MockAttributesCsSource;
             await VerifyAnalyzerAsyncCs(source);
+
+            var vbSource = @"
+Imports System.Runtime.Versioning
+
+Public Class Test
+    Public Sub M1()
+        Dim odc As OsDependentClass = [|New OsDependentClass()|]
+        [|odc.M2()|]
+    End Sub
+End Class
+
+<MinimumOSPlatform(""Windows10.1.2.3"")>
+Public Class OsDependentClass
+    Public Sub M2()
+    End Sub
+End Class
+" + MockAttributesVbSource;
+            await VerifyAnalyzerAsyncVb(vbSource);
         }
 
         [Fact]
@@ -421,7 +515,7 @@ public class Test
     {
     }
 }
-" + MockAttributesSource;
+" + MockAttributesCsSource;
             await VerifyAnalyzerAsyncCs(source);
         }
 
@@ -448,7 +542,7 @@ public class Test
     {
     }
 }
-" + MockAttributesSource;
+" + MockAttributesCsSource;
             await VerifyAnalyzerAsyncCs(source);
         }
 
@@ -477,7 +571,7 @@ public class Test
     {
     }
 }
-" + MockAttributesSource;
+" + MockAttributesCsSource;
             await VerifyAnalyzerAsyncCs(source);
         }
 
@@ -507,7 +601,7 @@ public class Test
     {
     }
 }
-" + MockAttributesSource;
+" + MockAttributesCsSource;
             await VerifyAnalyzerAsyncCs(source);
         }
 
@@ -539,8 +633,31 @@ public class Test
     {
     }
 }
-" + MockAttributesSource;
+" + MockAttributesCsSource;
             await VerifyAnalyzerAsyncCs(source);
+
+            var vbSource = @"
+Imports System.Runtime.Versioning
+
+Public Class Test
+    Public Delegate Sub Del()
+    <MinimumOSPlatform(""Windows10.1.2.3"")>
+    Public Event SampleEvent As Del
+
+    Public Sub M1()
+        AddHandler [|SampleEvent|], AddressOf M3
+        M2()
+    End Sub
+
+    Public Sub M2()
+        RaiseEvent  [|SampleEvent|]
+    End Sub
+
+    Public Sub M3()
+    End Sub
+End Class"
++ MockAttributesVbSource;
+            await VerifyAnalyzerAsyncVb(vbSource);
         }
 
         [Fact]
@@ -563,7 +680,7 @@ public class Test
         handler(); // assume it shouldn't warn here
     }
 }
-" + MockAttributesSource;
+" + MockAttributesCsSource;
             await VerifyAnalyzerAsyncCs(source);
         }
 
@@ -639,7 +756,7 @@ public class OsDependentClass
     {
     }
 }
-" + MockAttributesSource;
+" + MockAttributesCsSource;
 
             if (warn)
             {
@@ -677,7 +794,7 @@ public class OsDependentClass
     {
     }
 }
-" + MockAttributesSource;
+" + MockAttributesCsSource;
 
             if (warn)
             {
@@ -732,7 +849,7 @@ public class OsDependentClass
     {
     }
 }
-" + MockAttributesSource;
+" + MockAttributesCsSource;
 
             if (warn)
             {
@@ -776,7 +893,19 @@ public class OsDependentClass
             await test.RunAsync();
         }
 
-        private readonly string MockAttributesSource = @"
+        private static async Task VerifyAnalyzerAsyncVb(string sourceCode) => await PopulateTestVb(sourceCode).RunAsync();
+
+        private static VerifyVB.Test PopulateTestVb(string sourceCode)
+        {
+            return new VerifyVB.Test
+            {
+                TestCode = sourceCode,
+                ReferenceAssemblies = ReferenceAssemblies.NetCore.NetCoreApp50,
+                MarkupOptions = MarkupOptions.UseFirstDescriptor,
+            };
+        }
+
+        private readonly string MockAttributesCsSource = @"
 namespace System.Runtime.Versioning
 {
     public abstract class OSPlatformAttribute : Attribute
@@ -851,6 +980,64 @@ namespace System.Runtime.Versioning
         public string Url { get; set; }
     }
 }
+";
+
+        private readonly string MockAttributesVbSource = @"
+Namespace System.Runtime.Versioning
+    Public MustInherit Class OSPlatformAttribute
+        Inherits Attribute
+
+        Private Protected Sub New(ByVal platformName As String)
+            PlatformName = platformName
+        End Sub
+
+        Public ReadOnly Property PlatformName As String
+    End Class
+
+    <AttributeUsage(AttributeTargets.Assembly, AllowMultiple:=False, Inherited:=False)>
+    Public NotInheritable Class TargetPlatformAttribute
+        Inherits OSPlatformAttribute
+
+        Public Sub New(ByVal platformName As String)
+            MyBase.New(platformName)
+        End Sub
+    End Class
+
+    <AttributeUsage(AttributeTargets.Assembly Or AttributeTargets.[Class] Or AttributeTargets.Constructor Or AttributeTargets.[Event] Or AttributeTargets.Method Or AttributeTargets.[Module] Or AttributeTargets.[Property] Or AttributeTargets.Field Or AttributeTargets.Struct, AllowMultiple:=True, Inherited:=False)>
+    Public NotInheritable Class MinimumOSPlatformAttribute
+        Inherits OSPlatformAttribute
+
+        Public Sub New(ByVal platformName As String)
+            MyBase.New(platformName)
+        End Sub
+    End Class
+
+    <AttributeUsage(AttributeTargets.Assembly Or AttributeTargets.[Class] Or AttributeTargets.Constructor Or AttributeTargets.[Event] Or AttributeTargets.Method Or AttributeTargets.[Module] Or AttributeTargets.[Property] Or AttributeTargets.Field Or AttributeTargets.Struct, AllowMultiple:=True, Inherited:=False)>
+    Public NotInheritable Class RemovedInOSPlatformAttribute
+        Inherits OSPlatformAttribute
+
+        Public Sub New(ByVal platformName As String)
+            MyBase.New(platformName)
+        End Sub
+    End Class
+
+    <AttributeUsage(AttributeTargets.Assembly Or AttributeTargets.[Class] Or AttributeTargets.Constructor Or AttributeTargets.[Event] Or AttributeTargets.Method Or AttributeTargets.[Module] Or AttributeTargets.[Property] Or AttributeTargets.Field Or AttributeTargets.Struct, AllowMultiple:=True, Inherited:=False)>
+    Public NotInheritable Class ObsoletedInOSPlatformAttribute
+        Inherits OSPlatformAttribute
+
+        Public Sub New(ByVal platformName As String)
+            MyBase.New(platformName)
+        End Sub
+
+        Public Sub New(ByVal platformName As String, ByVal message As String)
+            MyBase.New(platformName)
+            Message = message
+        End Sub
+
+        Public ReadOnly Property Message As String
+        Public Property Url As String
+    End Class
+End Namespace
 ";
     }
 }
