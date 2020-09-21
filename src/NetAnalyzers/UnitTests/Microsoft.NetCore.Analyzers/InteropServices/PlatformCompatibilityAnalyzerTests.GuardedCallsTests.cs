@@ -70,11 +70,11 @@ class Test
 {
     public void Api_Usage()
     {
-        if (!OperatingSystemHelper.IsWindows() ||
+        /*if (!OperatingSystemHelper.IsWindows() ||
             OperatingSystemHelper.IsWindowsVersionAtLeast(10, 0, 19041))
         {
             Api();
-        }
+        }*/
 
         [|Api()|]; // Two diagnostics expected
     }
@@ -263,7 +263,7 @@ namespace PlatformCompatDemo.SupportedUnupported
                 [|unsupportedOnWindows.TypeUnsupportedOnWindows_FunctionSupportedOnWindows11()|];
 
                 var unsupportedOnBrowser = new TypeUnsupportedOnBrowser();
-                unsupportedOnBrowser.TypeUnsupportedOnBrowser_FunctionSupportedOnBrowser();
+                [|unsupportedOnBrowser.TypeUnsupportedOnBrowser_FunctionSupportedOnBrowser()|];
 
                 var unsupportedOnWindowsSupportedOnWindows11 = [|new TypeUnsupportedOnWindowsSupportedOnWindows11()|];
                 [|unsupportedOnWindowsSupportedOnWindows11.TypeUnsupportedOnWindowsSupportedOnWindows11_FunctionUnsupportedOnWindows12SupportedOnWindows13()|];
@@ -358,7 +358,7 @@ namespace PlatformCompatDemo.SupportedUnupported
                 unsupportedOnWindows10AndBrowser.TypeUnsupportedOnWindows10AndBrowser_FunctionUnsupportedOnWindows11();
 
                 var unsupportedCombinations = new TypeUnsupportedOnBrowser();
-                unsupportedOnBrowser.TypeUnsupportedOnBrowser_FunctionSupportedOnBrowser();
+                [|unsupportedOnBrowser.TypeUnsupportedOnBrowser_FunctionSupportedOnBrowser()|];
             }
         }
 
@@ -377,7 +377,7 @@ namespace PlatformCompatDemo.SupportedUnupported
                 unsupportedOnWindows.TypeUnsupportedOnWindows_FunctionSupportedOnWindows11UnsupportedOnWindows12SupportedOnWindows13();
 
                 var unsupportedOnBrowser = new TypeUnsupportedOnBrowser();
-                unsupportedOnBrowser.TypeUnsupportedOnBrowser_FunctionSupportedOnBrowser();
+                [|unsupportedOnBrowser.TypeUnsupportedOnBrowser_FunctionSupportedOnBrowser()|];
 
                 var unsupportedOnWindowsSupportedOnWindows11 = new TypeUnsupportedOnWindowsSupportedOnWindows11();
                 unsupportedOnWindowsSupportedOnWindows11.TypeUnsupportedOnWindowsSupportedOnWindows11_FunctionUnsupportedOnWindows12();
@@ -938,7 +938,7 @@ public class WindowsSpecificApis
 using System;
 using System.Runtime.Versioning;
 
-[assembly:SupportedOSPlatform(""windows"")]
+[SupportedOSPlatform(""windows"")]
 static class Program
 {
     public static void Main()

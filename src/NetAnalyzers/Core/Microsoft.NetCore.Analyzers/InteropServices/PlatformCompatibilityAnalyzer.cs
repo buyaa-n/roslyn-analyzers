@@ -670,14 +670,9 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
 
                 if (attribute.SupportedFirst != null)
                 {
-                    if (attribute.UnsupportedFirst == null || attribute.UnsupportedFirst > attribute.SupportedFirst)
+                    if (attribute.UnsupportedFirst == null || attribute.UnsupportedFirst >= attribute.SupportedFirst)
                     {
                         // If only supported for current platform
-                        if (supportedOnlyList.HasValue && !supportedOnlyList.Value)
-                        {
-                            return true; // invalid state, do not need to add this API to the list
-                        }
-
                         supportedOnlyPlatforms.Add(platformName);
                         supportedOnlyList = true;
 
@@ -703,11 +698,6 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                     }
                     else if (attribute.UnsupportedFirst != null) // also means Unsupported <= Supported, optional list
                     {
-                        if (supportedOnlyList.HasValue && supportedOnlyList.Value)
-                        {
-                            return true; // do not need to add this API to the list
-                        }
-
                         supportedOnlyList = false;
 
                         if (callSiteAttributes.TryGetValue(platformName, out var callSiteAttribute))
@@ -745,13 +735,6 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                 }
                 else
                 {
-                    if (supportedOnlyList.HasValue && supportedOnlyList.Value)
-                    {
-                        return true; // do not need to add this API to the list
-                    }
-
-                    supportedOnlyList = false;
-
                     if (attribute.UnsupportedFirst != null) // Unsupported for this but supported all other
                     {
                         if (callSiteAttributes.TryGetValue(platformName, out var callSiteAttribute))
@@ -976,11 +959,10 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
             else
             {
                 Debug.Assert(name == UnsupportedOSPlatformAttribute);
-                AddOrUpdateUnsupportedAttribute(platformName, existingAttributes[platformName], version, existingAttributes);
+                AddOrUpdateUnsupportedAttribute(existingAttributes[platformName], version);
             }
 
-            static void AddOrUpdateUnsupportedAttribute(string name, PlatformAttributes attributes,
-                Version version, SmallDictionary<string, PlatformAttributes> existingAttributes)
+            static void AddOrUpdateUnsupportedAttribute(PlatformAttributes attributes, Version version)
             {
                 if (attributes.UnsupportedFirst != null)
                 {
@@ -1022,32 +1004,11 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                 }
                 else
                 {
-                    if (attributes.SupportedFirst != null && attributes.SupportedFirst >= version)
-                    {
-                        // Override needed
-                        if (attributes.SupportedSecond != null)
-                        {
-                            attributes.SupportedFirst = attributes.SupportedSecond;
-                            attributes.SupportedSecond = null;
-                        }
-                        else
-                        {
-                            attributes.SupportedFirst = null;
-                        }
-                        if (!HasAnySupportedOnlyAttribute(name, existingAttributes))
-                        {
-                            attributes.UnsupportedFirst = version;
-                        }
-                    }
-                    else
+                    if (attributes.SupportedFirst == null || attributes.SupportedFirst != version)
                     {
                         attributes.UnsupportedFirst = version;
                     }
                 }
-
-                static bool HasAnySupportedOnlyAttribute(string name, SmallDictionary<string, PlatformAttributes> existingAttributes) =>
-                    existingAttributes.Any(a => !a.Key.Equals(name, StringComparison.OrdinalIgnoreCase) &&
-                    AllowList(a.Value));
             }
 
             static void AddOrUpdateSupportedAttribute(PlatformAttributes attributes, Version version)
@@ -1087,6 +1048,20 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                 }
                 else
                 {
+                    if (attributes.UnsupportedFirst != null && attributes.UnsupportedFirst == version)
+                    {
+                        // Override needed
+                        if (attributes.UnsupportedSecond != null)
+                        {
+                            attributes.UnsupportedFirst = attributes.UnsupportedSecond;
+                            attributes.UnsupportedSecond = null;
+                        }
+                        else
+                        {
+                            attributes.UnsupportedFirst = null;
+                        }
+                    }
+
                     attributes.SupportedFirst = version;
                 }
             }
@@ -1099,7 +1074,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
         /// <returns>true if it is allow list</returns>
         private static bool AllowList(PlatformAttributes attributes) =>
             attributes.SupportedFirst != null &&
-            (attributes.UnsupportedFirst == null || attributes.SupportedFirst < attributes.UnsupportedFirst);
+            (attributes.UnsupportedFirst == null || attributes.SupportedFirst <= attributes.UnsupportedFirst);
 
         /// <summary>
         /// Determines if the attributes unsupported only for the platform (deny list)
@@ -1108,6 +1083,6 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
         /// <returns>true if it is deny list</returns>
         private static bool DenyList(PlatformAttributes attributes) =>
             attributes.UnsupportedFirst != null &&
-            (attributes.SupportedFirst == null || attributes.UnsupportedFirst <= attributes.SupportedFirst);
+            (attributes.SupportedFirst == null || attributes.UnsupportedFirst < attributes.SupportedFirst);
     }
 }

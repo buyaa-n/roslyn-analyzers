@@ -3,6 +3,7 @@
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis.Testing;
+using Test.Utilities;
 using Xunit;
 using VerifyCS = Test.Utilities.CSharpCodeFixVerifier<
     Microsoft.NetCore.Analyzers.InteropServices.PlatformCompatibilityAnalyzer,
@@ -1010,7 +1011,7 @@ namespace CallerUnsupportsSubsetOfTarget
             // as it was only not supported window supporting it later doesn' matter for call site that is 
             // not supporting windows at all, so it shouldn't raise diagnostic
             TargetUnsupportedOnWindows.FunctionSupportedOnWindows1(); // should not warn
-            TargetUnsupportedOnWindows.FunctionSupportedOnWindowsSameVersion();
+            [|TargetUnsupportedOnWindows.FunctionSupportedOnWindowsSameVersion()|];
         }
     }
     [UnsupportedOSPlatform(""windows"")]
@@ -1206,6 +1207,74 @@ class Some
                     .WithMessage("'Some.Api1()' is supported on 'tvos' 4.0 and later").WithArguments("UnsupportedOnWindowsAndBrowser", "windows"));
         }
 
+        [Fact, WorkItem(4105, "https://github.com/dotnet/roslyn-analyzers/issues/4168")]
+        public async Task UnsupportedShouldNotSuppressSupportedWithSameVersion()
+        {
+            var source = @"
+using System.Runtime.Versioning;
+static class Program
+{
+    public static void Main()
+    {
+        [|UnsupportedOnBrowserType.SupportedOnWindowsIosTvos()|]; // 3 diagnostics expected
+        [|UnsupportedOnBrowserType.SupportedOnTvos4()|];
+    }
+}
+
+[UnsupportedOSPlatform(""browser"")]
+class UnsupportedOnBrowserType
+{
+    [SupportedOSPlatform(""windows"")]
+    [SupportedOSPlatform(""ios"")]
+    [SupportedOSPlatform(""tvos"")] 
+    public static void SupportedOnWindowsIosTvos() {}
+
+    [SupportedOSPlatform(""browser2.0"")] 
+    public static void SupportedOnBrowser() {}
+
+    [SupportedOSPlatform(""tvos4.0"")]    
+    public static void SupportedOnTvos4() {}
+}
+" + MockAttributesCsSource;
+            await VerifyAnalyzerAsyncCs(source, VerifyCS.Diagnostic(PlatformCompatibilityAnalyzer.SupportedOsRule).WithLocation(7, 9)
+                    .WithMessage("'UnsupportedOnBrowserType.SupportedOnWindowsIosTvos()' is supported on 'ios'"),
+                    VerifyCS.Diagnostic(PlatformCompatibilityAnalyzer.UnsupportedOsRule).WithLocation(7, 9)
+                    .WithMessage("'UnsupportedOnBrowserType.SupportedOnWindowsIosTvos()' is supported on 'tvos'"));
+        }
+
+        [Fact, WorkItem(4105, "https://github.com/dotnet/roslyn-analyzers/issues/4168")]
+        public async Task CallSitessUnsupportedShouldNotSuppressSupportedWithSameVersion()
+        {
+            var source = @"
+using System.Runtime.Versioning;
+[UnsupportedOSPlatform(""browser"")]
+static class Program
+{
+    public static void Main()
+    {
+        [|UnsupportedOnBrowserType.SupportedOnWindowsIosTvos()|]; // 3 diagnostics expected
+        [|UnsupportedOnBrowserType.SupportedOnTvos4()|];
+    }
+}
+
+[UnsupportedOSPlatform(""browser"")]
+class UnsupportedOnBrowserType
+{
+    [SupportedOSPlatform(""windows"")]
+    [SupportedOSPlatform(""ios"")]
+    [SupportedOSPlatform(""tvos"")] 
+    public static void SupportedOnWindowsIosTvos() {}
+
+    [SupportedOSPlatform(""tvos4.0"")]    
+    public static void SupportedOnTvos4() {}
+}
+" + MockAttributesCsSource;
+            await VerifyAnalyzerAsyncCs(source, VerifyCS.Diagnostic(PlatformCompatibilityAnalyzer.SupportedOsRule).WithLocation(8, 9)
+                    .WithMessage("'UnsupportedOnBrowserType.SupportedOnWindowsIosTvos()' is supported on 'ios'"),
+                    VerifyCS.Diagnostic(PlatformCompatibilityAnalyzer.UnsupportedOsRule).WithLocation(8, 9)
+                    .WithMessage("'UnsupportedOnBrowserType.SupportedOnWindowsIosTvos()' is supported on 'tvos'"));
+        }
+
         [Fact]
         public async Task PlatformOverrides()
         {
@@ -1219,50 +1288,51 @@ namespace PlatformCompatDemo.Bugs
         [SupportedOSPlatform(""windows"")]
         public void TestSupportedOnWindows()
         {
-            [|TargetSupportedOnWindows.FunctionUnsupportedOnWindows()|]; // should warn for unsupported windows
+            TargetSupportedOnWindows.FunctionUnsupportedOnWindows();
             TargetSupportedOnWindows.FunctionUnsupportedOnBrowser();
 
             TargetUnsupportedOnWindows.FunctionSupportedOnWindows();
-            [|TargetUnsupportedOnWindows.FunctionSupportedOnBrowser()|]; // should warn for unsupported windows                                    
+            [|TargetUnsupportedOnWindows.FunctionSupportedOnBrowser()|]; // 2 warnings expected                                   
         }
 
         [UnsupportedOSPlatform(""windows"")]
         public void TestUnsupportedOnWindows()
         {
-            TargetSupportedOnWindows.FunctionUnsupportedOnWindows();
+            [|TargetSupportedOnWindows.FunctionUnsupportedOnWindows()|];
             [|TargetSupportedOnWindows.FunctionUnsupportedOnBrowser()|]; // should warn supported on windows ignore unsupported on browser as this is allow list
 
-            TargetUnsupportedOnWindows.FunctionSupportedOnBrowser();   //  should warn supported on browser, but is this valid scenario? => Invalid scenario, so not warn 
-            TargetUnsupportedOnWindows.FunctionSupportedOnWindows();   // It's unsupporting Windows at the call site, which means the call site supports all other platforms.
-        }                                                               // It's calling into code that was NOT supported only on Windows but eventually added support, so it shouldn't raise diagnostic
+            [|TargetUnsupportedOnWindows.FunctionSupportedOnBrowser()|]; //  should warn supported on browser
+            [|TargetUnsupportedOnWindows.FunctionSupportedOnWindows()|]; // It's calling into code that was NOT supported on Windows but eventually added support, as call site is not supporing windows it should warn
+        }                                                                  
     }
 
     [SupportedOSPlatform(""windows"")]
     class TargetSupportedOnWindows
     {
-        [UnsupportedOSPlatform(""windows"")]
+        [UnsupportedOSPlatform(""windows"")] // This should be overwritten by parent, because Supported wins for equal version
         public static void FunctionUnsupportedOnWindows() { }
 
-        [UnsupportedOSPlatform(""browser"")]
+        [UnsupportedOSPlatform(""browser"")] // This should be overwritten by parent, windows only type shouldn't have an API unsupported on any other 
         public static void FunctionUnsupportedOnBrowser() { }
     }
 
     [UnsupportedOSPlatform(""windows"")]
     class TargetUnsupportedOnWindows
     {
-        [SupportedOSPlatform(""windows"")]
+        [SupportedOSPlatform(""windows"")] // This would overwrite parent's unsupport
         public static void FunctionSupportedOnWindows() { }
 
-        [SupportedOSPlatform(""browser"")]
+        [SupportedOSPlatform(""browser"")] // This would not overwrite parent's unsupport (different platform)
         public static void FunctionSupportedOnBrowser() { }
     }
 }
 " + MockAttributesCsSource;
-            await VerifyAnalyzerAsyncCs(source);
+            await VerifyAnalyzerAsyncCs(source, VerifyCS.Diagnostic(PlatformCompatibilityAnalyzer.SupportedOsRule).WithLocation(15, 13)
+                    .WithMessage("'TargetUnsupportedOnWindows.FunctionSupportedOnBrowser()' is supported on 'browser'"));
         }
 
         [Fact]
-        public async Task UnsupportedMustSuppressSupportedAssemblyAttribute()
+        public async Task SupportedMustSuppressUnsupportedAssemblyAttribute()
         {
             var source = @"
 using System.Runtime.Versioning;
@@ -1274,8 +1344,8 @@ namespace PlatformCompatDemo
     {
         public static void Main()
         {
-            [|CrossPlatformApis.DoesNotWorkOnBrowser()|];
-            var nonBrowser = [|new NonBrowserApis()|];
+            CrossPlatformApis.DoesNotWorkOnBrowser();
+            var nonBrowser = new NonBrowserApis();
         }
     }
 
@@ -1299,8 +1369,8 @@ namespace PlatformCompatDemo
         {
             var source = @"
 using System.Runtime.Versioning;
-[assembly: SupportedOSPlatform(""windows"")]
 
+[SupportedOSPlatform(""windows"")]
 static class Program
 {
     public static void Main()
@@ -1749,7 +1819,7 @@ namespace PlatformCompatDemo.SupportedUnupported
             unsupportedOnWindows10AndBrowser.TypeUnsupportedOnWindows10AndBrowser_FunctionUnsupportedOnWindows11();
         }
 
-        public static void UnsupportedCombinations() // no any diagnostics as it is deny list
+        public static void UnsupportedCombinations() // no any diagnostics as it is deny list except equal version case
         {
             var withoutAttributes = new TypeWithoutAttributes();
             withoutAttributes.TypeWithoutAttributes_FunctionUnsupportedOnWindowsSupportedOnWindows11();
@@ -1762,7 +1832,7 @@ namespace PlatformCompatDemo.SupportedUnupported
             unsupportedOnWindows.TypeUnsupportedOnWindows_FunctionSupportedOnWindows11UnsupportedOnWindows12SupportedOnWindows13();
 
             var unsupportedOnBrowser = new TypeUnsupportedOnBrowser();
-            unsupportedOnBrowser.TypeUnsupportedOnBrowser_FunctionSupportedOnBrowser();
+            [|unsupportedOnBrowser.TypeUnsupportedOnBrowser_FunctionSupportedOnBrowser()|]; // same version, should warn for support 
 
             var unsupportedOnWindowsSupportedOnWindows11 = new TypeUnsupportedOnWindowsSupportedOnWindows11();
             unsupportedOnWindowsSupportedOnWindows11.TypeUnsupportedOnWindowsSupportedOnWindows11_FunctionUnsupportedOnWindows12();
