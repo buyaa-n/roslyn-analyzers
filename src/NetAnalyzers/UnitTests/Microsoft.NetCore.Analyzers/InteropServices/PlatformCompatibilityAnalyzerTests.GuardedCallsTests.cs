@@ -1241,17 +1241,28 @@ public class Test
 {
     [UnsupportedOSPlatform(""Windows8.1"")]
     public string RemovedProperty { get; set;}
+
+    public static bool WindowsOnlyPropertyGetter
+    {
+        [SupportedOSPlatform(""windows"")]
+        get { return true; }
+        set { }
+    }
     
     public void M1()
     {
         if(OperatingSystemHelper.IsWindows() && !OperatingSystemHelper.IsWindowsVersionAtLeast(8, 0, 19222)) 
         {
+            WindowsOnlyPropertyGetter = true;
+            var val = WindowsOnlyPropertyGetter;
             RemovedProperty = ""Hello"";
             string s = RemovedProperty;
             M2(RemovedProperty);
         }
         else
         {
+            WindowsOnlyPropertyGetter = true;
+            var val = [|WindowsOnlyPropertyGetter|];
             [|RemovedProperty|] = ""Hello"";
             string s = [|RemovedProperty|];
             M2([|RemovedProperty|]);
@@ -3120,7 +3131,7 @@ Class Test
 End Class
 " + MockRuntimeApiSourceVb + MockAttributesVbSource;
             await VerifyAnalyzerAsyncVb(vbSource, s_msBuildPlatforms,
-                VerifyCS.Diagnostic(PlatformCompatibilityAnalyzer.SupportedOsRule).WithLocation(10, 13).WithMessage("'Test.M2()' is unsupported on 'Windows'"));
+                VerifyCS.Diagnostic(PlatformCompatibilityAnalyzer.SupportedOsRule).WithLocation(10, 13).WithMessage("'Private Sub M2()' is unsupported on 'Windows'"));
         }
 
         [Fact]
@@ -3174,23 +3185,33 @@ class Test
         public async Task GuardedWith_DebugAssertAnalysisTest()
         {
             var source = @"
+using System;
 using System.Diagnostics;
 using System.Runtime.Versioning;
-using System;
+using System.Runtime.InteropServices;
 
 class Test
 {
     void M1()
     {
+        Debug.Assert(RuntimeInformation.IsOSPlatform(OSPlatform.Windows));
+        M3();
+
+        // Should still warn for Windows10.1.2.3 
         [|M2()|];
 
         Debug.Assert(OperatingSystemHelper.IsOSPlatformVersionAtLeast(""Windows"", 10, 2));
-
         M2();
+        M3();
     }
 
     [SupportedOSPlatform(""Windows10.1.2.3"")]
     void M2()
+    {
+    }
+
+    [SupportedOSPlatform(""Windows"")]
+    void M3()
     {
     }
 }" + MockAttributesCsSource + MockOperatingSystemApiSource;
@@ -3419,7 +3440,53 @@ class Test
     }
 }" + MockAttributesCsSource + MockOperatingSystemApiSource;
 
-            await VerifyAnalyzerAsyncCs(source, "dotnet_code_quality.interprocedural_analysis_kind = ContextSensitive");
+            await VerifyAnalyzerAsyncCs(source, "dotnet_code_quality.interprocedural_analysis_kind = ContextSensitive\nbuild_property.TargetFramework = net5");
+        }
+
+        [Fact, WorkItem(4182, "https://github.com/dotnet/roslyn-analyzers/issues/4182")]
+        public async Task LoopWithinGuardCheck()
+        {
+            var source = @"
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
+
+namespace Repro
+{
+    public static partial class ProcessExtensions
+    {
+        public static int? GetParentProcessId(this Process process)
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                foreach (var entry in GetProcesses())
+                {
+                }
+            }
+            else
+            {
+                string line = """";
+                while (true)
+                {
+                    if (line.StartsWith("""", StringComparison.Ordinal))
+                    {
+                        if (true)
+                        {
+                        }
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        [SupportedOSPlatform(""windows"")]
+        public static IEnumerable<int> GetProcesses() => throw null;
+    }
+}" + MockAttributesCsSource + MockOperatingSystemApiSource;
+            await VerifyAnalyzerAsyncCs(source);
         }
 
         [Fact(Skip = "TODO: Analysis value not returned, needs to be fixed")]
