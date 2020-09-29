@@ -242,7 +242,7 @@ namespace PlatformCompatDemo.SupportedUnupported
                 unsupportedOnWindows.TypeUnsupportedOnWindows_FunctionSupportedOnWindows11UnsupportedOnWindows12SupportedOnWindows13();
 
                 var unsupportedOnBrowser = [|new TypeUnsupportedOnBrowser()|];
-                unsupportedOnBrowser.TypeUnsupportedOnBrowser_FunctionSupportedOnBrowser(); 
+                [|unsupportedOnBrowser.TypeUnsupportedOnBrowser_FunctionSupportedOnBrowser()|]; // warn for unsupported browser type
 
                 var unsupportedOnWindowsSupportedOnWindows11 = new TypeUnsupportedOnWindowsSupportedOnWindows11(); 
                 unsupportedOnWindowsSupportedOnWindows11.TypeUnsupportedOnWindowsSupportedOnWindows11_FunctionUnsupportedOnWindows12();
@@ -260,7 +260,7 @@ namespace PlatformCompatDemo.SupportedUnupported
                 [|withoutAttributes.TypeWithoutAttributes_FunctionUnsupportedOnWindowsSupportedOnWindows11UnsupportedOnWindows12SupportedOnWindows13()|];
 
                 var unsupportedOnWindows = [|new TypeUnsupportedOnWindows()|];
-                [|unsupportedOnWindows.TypeUnsupportedOnWindows_FunctionSupportedOnWindows11()|];
+                [|unsupportedOnWindows.TypeUnsupportedOnWindows_FunctionSupportedOnWindows11()|];  // should only warn for unsupported type, function attribute ignored
 
                 var unsupportedOnBrowser = new TypeUnsupportedOnBrowser();
                 unsupportedOnBrowser.TypeUnsupportedOnBrowser_FunctionSupportedOnBrowser();
@@ -278,7 +278,6 @@ namespace PlatformCompatDemo.SupportedUnupported
                 VerifyCS.Diagnostic(PlatformCompatibilityAnalyzer.SupportedOsVersionRule).WithLocation(37, 17).WithMessage("'TypeWithoutAttributes.TypeWithoutAttributes_FunctionUnsupportedOnWindowsSupportedOnWindows11()' is unsupported on 'windows'"),
                 VerifyCS.Diagnostic(PlatformCompatibilityAnalyzer.SupportedOsVersionRule).WithLocation(38, 17).WithMessage("'TypeWithoutAttributes.TypeWithoutAttributes_FunctionUnsupportedOnWindowsSupportedOnWindows11UnsupportedOnWindows12()' is unsupported on 'windows'"),
                 VerifyCS.Diagnostic(PlatformCompatibilityAnalyzer.SupportedOsVersionRule).WithLocation(39, 17).WithMessage("'TypeWithoutAttributes.TypeWithoutAttributes_FunctionUnsupportedOnWindowsSupportedOnWindows11UnsupportedOnWindows12SupportedOnWindows13()' is unsupported on 'windows'"),
-                VerifyCS.Diagnostic(PlatformCompatibilityAnalyzer.SupportedOsVersionRule).WithLocation(42, 17).WithMessage("'TypeUnsupportedOnWindows.TypeUnsupportedOnWindows_FunctionSupportedOnWindows11()' is unsupported on 'windows'"),
                 VerifyCS.Diagnostic(PlatformCompatibilityAnalyzer.SupportedOsVersionRule).WithLocation(47, 64).WithMessage("'TypeUnsupportedOnWindowsSupportedOnWindows11' is unsupported on 'windows'"),
                 VerifyCS.Diagnostic(PlatformCompatibilityAnalyzer.SupportedOsVersionRule).WithLocation(48, 17).WithMessage("'TypeUnsupportedOnWindowsSupportedOnWindows11.TypeUnsupportedOnWindowsSupportedOnWindows11_FunctionUnsupportedOnWindows12SupportedOnWindows13()' is unsupported on 'windows'"),
                 VerifyCS.Diagnostic(PlatformCompatibilityAnalyzer.SupportedOsVersionRule).WithLocation(50, 86).WithMessage("'TypeUnsupportedOnWindowsSupportedOnWindows11UnsupportedOnWindows12' is unsupported on 'windows'"));
@@ -568,6 +567,97 @@ class Test
         {
             [|NotForIos12OrLater()|];
         }
+    }
+
+    [UnsupportedOSPlatform(""browser"")]
+    void NotForBrowser()
+    {
+    }
+
+    [UnsupportedOSPlatform(""ios12.1"")]
+    void NotForIos12OrLater()
+    {
+    }
+}" + MockAttributesCsSource + MockOperatingSystemApiSource;
+
+            await VerifyAnalyzerAsyncCs(source, s_msBuildPlatforms);
+        }
+
+        [Fact, WorkItem(4190, "https://github.com/dotnet/roslyn-analyzers/issues/4190")]
+        public async Task Unsupported_GuardedWith_DebugAssert_IsOsNameMethods()
+        {
+            var source = @"
+using System;
+using System.Diagnostics;
+using System.Runtime.Versioning;
+using System.Runtime.InteropServices;
+
+class Test
+{
+    void M1()
+    {
+        Debug.Assert(!OperatingSystemHelper.IsBrowser());
+
+        NotForBrowser();
+        [|NotForIos12OrLater()|];
+    }
+
+    void M2()
+    {
+        Debug.Assert(OperatingSystemHelper.IsBrowser());
+
+        NotForIos12OrLater();
+        [|NotForBrowser()|];
+    }
+
+    void M3()
+    {
+        Debug.Assert(OperatingSystemHelper.IsOSPlatform(""Browser""));
+        [|NotForBrowser()|];
+    }
+
+    void M4()
+    {
+        Debug.Assert(!OperatingSystemHelper.IsOSPlatform(""Browser""));
+        NotForBrowser();
+    }
+
+    void M5()
+    {
+        Debug.Assert(OperatingSystemHelper.IsIOS());
+        [|NotForIos12OrLater()|];
+    }
+
+    void M6()
+    {
+        Debug.Assert(!OperatingSystemHelper.IsIOS());
+        NotForIos12OrLater();
+    }
+
+    void M7()
+    {
+        Debug.Assert(OperatingSystemHelper.IsIOSVersionAtLeast(12,1));
+        [|NotForIos12OrLater()|];
+    }
+
+    void M8()
+    {
+        Debug.Assert(!OperatingSystemHelper.IsIOSVersionAtLeast(12,1));
+        NotForIos12OrLater();
+    }
+
+    void M9()
+    {
+        Debug.Assert(OperatingSystemHelper.IsIOS());
+        Debug.Assert(!OperatingSystemHelper.IsIOSVersionAtLeast(12,0));
+        
+        NotForIos12OrLater();
+    }
+
+    void M10()
+    {
+        Debug.Assert(!(OperatingSystemHelper.IsIOS() && !OperatingSystemHelper.IsIOSVersionAtLeast(12,0)));
+        [|NotForIos12OrLater()|];
     }
 
     [UnsupportedOSPlatform(""browser"")]
@@ -905,8 +995,7 @@ class Test
 using System.Runtime.Versioning;
 using System;
 
-[assembly:SupportedOSPlatform(""windows7.0"")]
-
+[SupportedOSPlatform(""windows7.0"")]
 static class Program
 {
     public static void Main()
@@ -938,7 +1027,7 @@ public class WindowsSpecificApis
 using System;
 using System.Runtime.Versioning;
 
-[assembly:SupportedOSPlatform(""windows"")]
+[SupportedOSPlatform(""windows"")]
 static class Program
 {
     public static void Main()
@@ -2609,6 +2698,40 @@ public class Test
     public void M2()
     {
     }
+}
+" + MockAttributesCsSource + MockOperatingSystemApiSource;
+            await VerifyAnalyzerAsyncCs(source);
+        }
+
+        [Fact, WorkItem(4209, "https://github.com/dotnet/roslyn-analyzers/issues/4209")]
+        public async Task LambdaInvocationWithUnknownTarget_BeforeGuardedCall()
+        {
+            var source = @"
+using System.Runtime.Versioning;
+using System;
+
+class Test
+{
+    Func<string> Greetings = () => ""Hi!"";
+    
+    void M1()
+    {
+        Greetings();
+        if (OperatingSystemHelper.IsBrowser())
+        {
+            SupportedOnBrowser();
+        }
+        else
+        {
+            UnsupportedOnBrowser();
+        }
+    }
+
+    [SupportedOSPlatform(""browser"")]
+    void SupportedOnBrowser() { }
+
+    [UnsupportedOSPlatform(""browser"")]
+    void UnsupportedOnBrowser() { }
 }
 " + MockAttributesCsSource + MockOperatingSystemApiSource;
             await VerifyAnalyzerAsyncCs(source);
