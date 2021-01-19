@@ -24,12 +24,29 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
         /// </summary>
         private class PlatformAttributes
         {
-            public Version? SupportedFirst { get; set; }
-            public Version? SupportedSecond { get; set; }
-            public Version? UnsupportedFirst { get; set; }
-            public Version? UnsupportedSecond { get; set; }
+            public VersionAndLevel? SupportedFirst { get; set; }
+            public VersionAndLevel? SupportedSecond { get; set; }
+            public VersionAndLevel? UnsupportedFirst { get; set; }
+            public VersionAndLevel? UnsupportedSecond { get; set; }
             public bool HasAttribute() => SupportedFirst != null || UnsupportedFirst != null ||
                         SupportedSecond != null || UnsupportedSecond != null;
+        }
+
+        private class VersionAndLevel
+        {
+            public Version Version { get; set; }
+            public bool Assembly { get; set; }
+
+            public VersionAndLevel(Version version, bool assemblyLevel)
+            {
+                Version = version;
+                Assembly = assemblyLevel;
+            }
+
+            internal VersionAndLevel Clone()
+            {
+                return new VersionAndLevel((Version)Version.Clone(), Assembly);
+            }
         }
     }
 }

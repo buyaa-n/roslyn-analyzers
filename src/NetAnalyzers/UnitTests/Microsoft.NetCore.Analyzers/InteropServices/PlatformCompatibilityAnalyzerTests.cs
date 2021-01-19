@@ -171,32 +171,32 @@ public class Test
 {
     void ThrowWithStringArgument()
     {
-        [|SR.Message|] = ""Warns not reachable on Browser"";
+        SR.Message = ""Warns not reachable on Browser"";
         throw new PlatformNotSupportedException(SR.Message);
     }
 
     void ThrowNotSupportedWithStringArgument()
     {
-        [|SR.Message|] = ""Warns not reachable on Browser"";
+        SR.Message = ""Warns not reachable on Browser"";
         throw new NotSupportedException(SR.Message);
     }
     
     void ThrowWithNoArgument()
     {
-        [|SR.Message|] = ""Warns not reachable on Browser"";
+        SR.Message = ""Warns not reachable on Browser"";
         throw new PlatformNotSupportedException();
     }
     
     void ThrowWithStringAndExceptionConstructor()
     {
-        [|SR.Message|] = ""Warns not reachable on Browser"";
+        SR.Message = ""Warns not reachable on Browser"";
         throw new PlatformNotSupportedException(SR.Message, new Exception());
     }
     
     void ThrowWithAnotherExceptionUsingResourceString()
     {
-        [|SR.Message|] = ""Warns not reachable on Browser"";
-        throw new PlatformNotSupportedException(SR.Message, new Exception([|SR.Message|]));
+        SR.Message = ""Warns not reachable on Browser"";
+        throw new PlatformNotSupportedException(SR.Message, new Exception(SR.Message));
     }
 }";
             await VerifyAnalyzerAsyncCs(csSource);
@@ -1881,7 +1881,7 @@ namespace PlatformCompatDemo
         public static void Main()
         {
             [|CrossPlatformApis.WindowsApi()|];
-            var nonBrowser = new BrowserApis();
+            //var nonBrowser = new BrowserApis();
         }
     }
 
@@ -3196,6 +3196,134 @@ class UnsupportedWindows8_9_12_Ios6_7_14
                     Join(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityFromVersionToVersion, "windows", "10.0", "12.0"), GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityFromVersionToVersion, "ios", "7.0", "11.0"))),
                 VerifyCS.Diagnostic(PlatformCompatibilityAnalyzer.SupportedCsAllPlatforms).WithLocation(2).WithArguments("UnsupportedWindows8_9_12_Ios6_7_14.UnsupportedWindows6_10_Ios_1_5_11.UnsupportedWindowsIos2_9_10()",
                     Join(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityFromVersionToVersion, "windows", "10.0", "12.0"), GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityFromVersionToVersion, "ios", "9.0", "10.0"))));
+        }
+
+        [Fact]
+        public async Task LocalFunctionWithoutAttributeWithinPropertyGetterNotWarns()
+        {
+            var source = @"
+using System.Runtime.Versioning;
+
+[SupportedOSPlatform(""Browser"")]
+public class Test
+{
+    [UnsupportedOSPlatform(""browser"")]
+    public static string CurrentProgram
+    {
+        get
+        {
+            return EnsureInitialized();
+
+            string EnsureInitialized() { return string.Empty; }
+        }
+    }
+}";
+            await VerifyAnalyzerAsyncCs(source, s_msBuildPlatforms);
+        }
+
+        [Fact]
+        public async Task UnsupportedContextReferencedApiWithinSameAssemblyAttributeNotWarn()
+        {
+            var source = @"
+using System.Runtime.Versioning;
+
+[assembly:SupportedOSPlatform(""Browser"")] // Attribute from TFM target, can be ignored
+public class Test
+{
+    private string program;
+
+    [UnsupportedOSPlatform(""browser"")]
+    public string CurrentProgram
+    {
+        get
+        {
+            return program; // should not warn
+        }
+    }
+}";
+            await VerifyAnalyzerAsyncCs(source, s_msBuildPlatforms);
+        }
+
+        [Fact]
+        public async Task UnsupportedContextReferencedApiWithinSameAssemblyPlusImmediateAttributeWarns()
+        {
+            var source = @"
+using System.Runtime.Versioning;
+
+[assembly:SupportedOSPlatform(""Browser"")] // Attribute from TFM target, can be ignored
+public class Test
+{
+    [SupportedOSPlatform(""Browser"")] // Real platform dependency can be applied
+    private static string s_program;
+
+    [UnsupportedOSPlatform(""browser"")]
+    public static string CurrentProgram
+    {
+        get
+        {
+            return [|s_program|]; // should warn
+        }
+    }
+}";
+            await VerifyAnalyzerAsyncCs(source, s_msBuildPlatforms);
+        }
+
+        [Fact]
+        public async Task UnsupportedContextReferencedPCApiFromDifferentAssemblyWarns()
+        {
+            var source = @"
+using System.Runtime.Versioning;
+using System;
+
+[assembly:SupportedOSPlatform(""Windows"")] // Attribute from TFM target, can be ignored
+public class Test
+{
+    [UnsupportedOSPlatform(""windows"")]
+    public void Beep(int frequency, int duration)
+    {
+        [|Console.Beep(frequency, duration)|]; // Windows only from different assembly, should still warn
+    }
+}";
+            await VerifyAnalyzerAsyncCs(source, s_msBuildPlatforms);
+        }
+
+        [Fact]
+        public async Task ChildCanNarrowUpperLevelSupportedPlatforms()
+        {
+            var source = @"
+using System.Runtime.Versioning;
+
+[assembly:SupportedOSPlatform(""windows"")]
+[assembly:SupportedOSPlatform(""ios"")]
+public class Test
+{
+    [SupportedOSPlatform(""windows"")]
+    private void WindowsOnly() { }
+
+    [SupportedOSPlatform(""ios"")]
+    private void IosOnly () { }
+
+    public void M1 ()
+    {
+        [|WindowsOnly()|];
+        [|IosOnly()|];
+    }
+
+    [SupportedOSPlatform(""Windows"")]
+    public void M2 ()
+    {
+        WindowsOnly();
+       [|IosOnly()|];
+    }
+
+    [SupportedOSPlatform(""iOS"")]
+    public void M3 ()
+    {
+        [|WindowsOnly()|];
+        IosOnly();
+    }
+}";
+            await VerifyAnalyzerAsyncCs(source, s_msBuildPlatforms);
         }
 
         private string GetFormattedString(string resource, params string[] args) =>

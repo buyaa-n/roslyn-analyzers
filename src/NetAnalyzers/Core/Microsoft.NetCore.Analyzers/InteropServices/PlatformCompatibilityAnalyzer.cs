@@ -415,7 +415,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                             {
                                 if (attribute.UnsupportedFirst != null)
                                 {
-                                    if (attribute.UnsupportedFirst >= info.Version)
+                                    if (attribute.UnsupportedFirst.Version >= info.Version)
                                     {
                                         if (DenyList(attribute))
                                         {
@@ -429,7 +429,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
 
                                 if (attribute.UnsupportedSecond != null)
                                 {
-                                    if (attribute.UnsupportedSecond <= info.Version)
+                                    if (attribute.UnsupportedSecond.Version <= info.Version)
                                     {
                                         attribute.UnsupportedSecond = null;
                                     }
@@ -446,21 +446,21 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                                 {
                                     if (attribute.UnsupportedFirst != null &&
                                         capturedVersions.TryGetValue(info.PlatformName, out var version) &&
-                                        attribute.UnsupportedFirst >= version)
+                                        attribute.UnsupportedFirst.Version >= version)
                                     {
                                         attribute.UnsupportedFirst = null;
                                     }
 
                                     if (attribute.UnsupportedSecond != null &&
                                         capturedVersions.TryGetValue(info.PlatformName, out version) &&
-                                        attribute.UnsupportedSecond <= version)
+                                        attribute.UnsupportedSecond.Version <= version)
                                     {
                                         attribute.UnsupportedSecond = null;
                                     }
                                 }
 
                                 if (attribute.SupportedFirst != null &&
-                                    attribute.SupportedFirst <= info.Version)
+                                    attribute.SupportedFirst.Version <= info.Version)
                                 {
                                     attribute.SupportedFirst = null;
                                     RemoveUnsupportedWithLessVersion(info.Version, attribute);
@@ -468,7 +468,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                                 }
 
                                 if (attribute.SupportedSecond != null &&
-                                    attribute.SupportedSecond <= info.Version)
+                                    attribute.SupportedSecond.Version <= info.Version)
                                 {
                                     attribute.SupportedSecond = null;
                                     RemoveUnsupportedWithLessVersion(info.Version, attribute);
@@ -527,22 +527,22 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
             {
                 if (csAttributes == null)
                 {
-                    csAttributes = new SmallDictionary<string, PlatformAttributes>();
+                    csAttributes = new SmallDictionary<string, PlatformAttributes>(StringComparer.OrdinalIgnoreCase);
                 }
                 if (csAttributes.TryGetValue(info.PlatformName, out var attributes))
                 {
                     if (attributes.SupportedFirst == null)
                     {
-                        attributes.SupportedFirst = info.Version;
+                        attributes.SupportedFirst = new VersionAndLevel(info.Version, false);
                     }
                     else
                     {
-                        attributes.SupportedSecond = info.Version;
+                        attributes.SupportedSecond = new VersionAndLevel(info.Version, false);
                     }
                 }
                 else
                 {
-                    csAttributes.Add(info.PlatformName, new PlatformAttributes() { SupportedFirst = info.Version });
+                    csAttributes.Add(info.PlatformName, new PlatformAttributes() { SupportedFirst = new VersionAndLevel(info.Version, false) });
                 }
                 return csAttributes;
             }
@@ -565,7 +565,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
             static void RemoveUnsupportedWithLessVersion(Version supportedVersion, PlatformAttributes attribute)
             {
                 if (attribute.UnsupportedFirst != null &&
-                    attribute.UnsupportedFirst <= supportedVersion)
+                    attribute.UnsupportedFirst.Version <= supportedVersion)
                 {
                     attribute.UnsupportedFirst = null;
                 }
@@ -643,20 +643,20 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                         if (pAttribute.SupportedFirst != null)
                         {
                             var supportedVersion = pAttribute.SupportedSecond ?? pAttribute.SupportedFirst;
-                            if (pAttribute.UnsupportedFirst != null && !IsEmptyVersion(pAttribute.UnsupportedFirst))
+                            if (pAttribute.UnsupportedFirst != null && !IsEmptyVersion(pAttribute.UnsupportedFirst.Version))
                             {
-                                if (IsEmptyVersion(supportedVersion))
+                                if (IsEmptyVersion(supportedVersion.Version))
                                 {
                                     platformNames.Add(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityVersionAndBefore,
-                                        pName, pAttribute.UnsupportedFirst));
+                                        pName, pAttribute.UnsupportedFirst.Version));
                                 }
                                 else
                                 {
                                     platformNames.Add(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityFromVersionToVersion,
-                                        pName, supportedVersion, pAttribute.UnsupportedFirst));
+                                        pName, supportedVersion.Version, pAttribute.UnsupportedFirst.Version));
                                 }
                             }
-                            else if (IsEmptyVersion(supportedVersion))
+                            else if (IsEmptyVersion(supportedVersion.Version))
                             {
                                 if (csAttributes != null && HasSameVersionedPlatformSupport(csAttributes, pName, checkSupport: false))
                                 {
@@ -667,12 +667,12 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                             }
                             else
                             {
-                                platformNames.Add(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityVersionAndLater, pName, supportedVersion));
+                                platformNames.Add(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityVersionAndLater, pName, supportedVersion.Version));
                             }
                         }
                         else if (pAttribute.UnsupportedFirst != null)
                         {
-                            if (IsEmptyVersion(pAttribute.UnsupportedFirst))
+                            if (IsEmptyVersion(pAttribute.UnsupportedFirst.Version))
                             {
                                 if (csAttributes != null && HasSameVersionedPlatformSupport(csAttributes, pName, checkSupport: true))
                                 {
@@ -684,7 +684,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                             else
                             {
                                 platformNames.Add(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityVersionAndLater,
-                                    pName, pAttribute.UnsupportedFirst));
+                                    pName, pAttribute.UnsupportedFirst.Version));
                             }
                             supportedRule = false;
                         }
@@ -737,33 +737,33 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                             {
                                 unsupportedRule = false;
 
-                                if (supportedVersion > unsupportedVersion)
+                                if (supportedVersion.Version > unsupportedVersion.Version)
                                 {
                                     if (csAttributes == null || (csAttributes.TryGetValue(pName, out var csAttribute) &&
-                                        csAttribute.UnsupportedFirst != null && csAttribute.UnsupportedFirst > supportedVersion))
+                                        csAttribute.UnsupportedFirst != null && csAttribute.UnsupportedFirst.Version > supportedVersion.Version))
                                     {
                                         unsupportedRule = true;
-                                        if (IsEmptyVersion(pAttribute.UnsupportedFirst!))
+                                        if (IsEmptyVersion(pAttribute.UnsupportedFirst!.Version))
                                         {
-                                            platformNames.Add(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityVersionAndBefore, pName, supportedVersion));
+                                            platformNames.Add(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityVersionAndBefore, pName, supportedVersion.Version));
                                         }
                                         else
                                         {
-                                            platformNames.Add(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityFromVersionToVersion, pName, unsupportedVersion, supportedVersion));
+                                            platformNames.Add(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityFromVersionToVersion, pName, unsupportedVersion.Version, supportedVersion.Version));
                                         }
                                         continue;
                                     }
-                                    platformNames.Add(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityVersionAndLater, pName, supportedVersion));
+                                    platformNames.Add(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityVersionAndLater, pName, supportedVersion.Version));
                                 }
                                 else
                                 {
                                     platformNames.Add(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityFromVersionToVersion,
-                                        pName, supportedVersion, unsupportedVersion));
+                                        pName, supportedVersion.Version, unsupportedVersion.Version));
                                 }
                             }
                             else
                             {
-                                if (IsEmptyVersion(unsupportedVersion))
+                                if (IsEmptyVersion(unsupportedVersion.Version))
                                 {
                                     if (csAttributes != null && HasSameVersionedPlatformSupport(csAttributes, pName, checkSupport: true))
                                     {
@@ -774,20 +774,20 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                                 }
                                 else
                                 {
-                                    platformNames.Add(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityVersionAndLater, pName, unsupportedVersion));
+                                    platformNames.Add(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityVersionAndLater, pName, unsupportedVersion.Version));
                                 }
                             }
                         }
                         else if (supportedVersion != null)
                         {
                             unsupportedRule = false;
-                            if (IsEmptyVersion(supportedVersion))
+                            if (IsEmptyVersion(supportedVersion.Version))
                             {
                                 platformNames.Add($"'{pName}'");
                             }
                             else
                             {
-                                platformNames.Add(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityVersionAndLater, pName, supportedVersion));
+                                platformNames.Add(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityVersionAndLater, pName, supportedVersion.Version));
                             }
                         }
                     }
@@ -808,23 +808,23 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                         if (supportedVersion != null)
                         {
                             callsite = Callsite.Reachable;
-                            if (csAttribute.UnsupportedFirst != null && !IsEmptyVersion(csAttribute.UnsupportedFirst))
+                            if (csAttribute.UnsupportedFirst != null && !IsEmptyVersion(csAttribute.UnsupportedFirst.Version))
                             {
-                                if (IsEmptyVersion(supportedVersion))
+                                if (IsEmptyVersion(supportedVersion.Version))
                                 {
-                                    platformNames.Add(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityVersionAndBefore, pName, csAttribute.UnsupportedFirst));
+                                    platformNames.Add(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityVersionAndBefore, pName, csAttribute.UnsupportedFirst.Version));
                                 }
-                                else if (supportedVersion > csAttribute.UnsupportedFirst)
+                                else if (supportedVersion.Version > csAttribute.UnsupportedFirst.Version)
                                 {
-                                    platformNames.Add(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityVersionAndLater, pName, supportedVersion));
+                                    platformNames.Add(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityVersionAndLater, pName, supportedVersion.Version));
                                 }
                                 else
                                 {
                                     platformNames.Add(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityFromVersionToVersion,
-                                        pName, supportedVersion, csAttribute.UnsupportedFirst));
+                                        pName, supportedVersion.Version, csAttribute.UnsupportedFirst.Version));
                                 }
                             }
-                            else if (IsEmptyVersion(supportedVersion))
+                            else if (IsEmptyVersion(supportedVersion.Version))
                             {
                                 if (HasSameVersionedPlatformSupport(attributes, pName, supported))
                                 {
@@ -836,14 +836,14 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                             else
                             {
                                 var unsupportedVersion = csAttribute.UnsupportedSecond ?? csAttribute.UnsupportedFirst;
-                                if (unsupportedVersion != null && unsupportedVersion > supportedVersion)
+                                if (unsupportedVersion != null && unsupportedVersion.Version > supportedVersion.Version)
                                 {
                                     platformNames.Add(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityFromVersionToVersion,
-                                        pName, supportedVersion, unsupportedVersion));
+                                        pName, supportedVersion.Version, unsupportedVersion.Version));
                                 }
                                 else
                                 {
-                                    platformNames.Add(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityVersionAndLater, pName, supportedVersion));
+                                    platformNames.Add(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityVersionAndLater, pName, supportedVersion.Version));
                                 }
                             }
                         }
@@ -854,7 +854,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                             {
                                 var calledUnsupported = attribute.UnsupportedSecond ?? attribute.UnsupportedFirst;
                                 callsite = Callsite.Unreachable;
-                                if (IsEmptyVersion(unsupportedVersion))
+                                if (IsEmptyVersion(unsupportedVersion.Version))
                                 {
                                     if (HasSameVersionedPlatformSupport(attributes, pName, supported))
                                     {
@@ -865,17 +865,17 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                                 }
                                 else
                                 {
-                                    if ((attribute.SupportedFirst == null || !IsEmptyVersion(attribute.SupportedFirst)) &&
-                                        (calledUnsupported == null || calledUnsupported < unsupportedVersion))
+                                    if ((attribute.SupportedFirst == null || !IsEmptyVersion(attribute.SupportedFirst.Version)) &&
+                                        (calledUnsupported == null || calledUnsupported.Version < unsupportedVersion.Version))
                                     {
                                         callsite = Callsite.Reachable;
                                         platformNames.Add(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityVersionAndBefore,
-                                            pName, unsupportedVersion));
+                                            pName, unsupportedVersion.Version));
                                     }
                                     else
                                     {
                                         platformNames.Add(GetFormattedString(MicrosoftNetCoreAnalyzersResources.PlatformCompatibilityVersionAndLater,
-                                            pName, unsupportedVersion));
+                                            pName, unsupportedVersion.Version));
                                     }
                                 }
                             }
@@ -902,14 +902,14 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                         var supportedVersion = attribute.SupportedSecond ?? attribute.SupportedFirst;
                         if (supportedVersion != null)
                         {
-                            version = version == null || supportedVersion >= version ? supportedVersion : version;
+                            version = version == null || supportedVersion.Version >= version.Version ? supportedVersion : version;
                         }
                         else
                         {
                             var unsupportedVersion = attribute.UnsupportedSecond ?? attribute.UnsupportedFirst;
                             if (unsupportedVersion != null)
                             {
-                                version = version == null || unsupportedVersion >= version ? unsupportedVersion : version;
+                                version = version == null || unsupportedVersion.Version >= version.Version ? unsupportedVersion : version;
                             }
                             else
                             {
@@ -917,7 +917,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                             }
                         }
                     }
-                    if (version != null && !IsEmptyVersion(version))
+                    if (version != null && !IsEmptyVersion(version.Version))
                     {
                         return true;
                     }
@@ -1067,14 +1067,17 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                 if (TryGetOrCreatePlatformAttributes(symbol, checkParents, platformSpecificMembers, out var operationAttributes))
                 {
                     var containingSymbol = context.ContainingSymbol;
-                    if (containingSymbol is IMethodSymbol method && method.IsAccessorMethod())
+                    bool sameAssembly = false;
+
+                    if (platformSpecificMembers.TryGetValue(symbol.ContainingAssembly, out var assemblyAttributes) && assemblyAttributes != null && AllowList(assemblyAttributes.First().Value) &&
+                        platformSpecificMembers.TryGetValue(context.ContainingSymbol.ContainingAssembly, out var csAssemblyAttributes) && assemblyAttributes.Equals(csAssemblyAttributes))
                     {
-                        containingSymbol = method.AssociatedSymbol;
+                        sameAssembly = true;
                     }
 
                     if (TryGetOrCreatePlatformAttributes(containingSymbol, true, platformSpecificMembers, out var callSiteAttributes))
                     {
-                        if (IsNotSuppressedByCallSite(operationAttributes, callSiteAttributes, msBuildPlatforms, out var notSuppressedAttributes))
+                        if (IsNotSuppressedByCallSite(operationAttributes, callSiteAttributes, msBuildPlatforms, sameAssembly, out var notSuppressedAttributes))
                         {
                             platformSpecificOperations.TryAdd(new KeyValuePair<IOperation, ISymbol>(operation, symbol), (notSuppressedAttributes, callSiteAttributes));
                         }
@@ -1149,7 +1152,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
 
         private static bool IsNotSuppressedByCallSite(SmallDictionary<string, PlatformAttributes> operationAttributes,
             SmallDictionary<string, PlatformAttributes> callSiteAttributes, ImmutableArray<string> msBuildPlatforms,
-            out SmallDictionary<string, PlatformAttributes> notSuppressedAttributes)
+            bool sameAssembly, out SmallDictionary<string, PlatformAttributes> notSuppressedAttributes)
         {
             notSuppressedAttributes = new SmallDictionary<string, PlatformAttributes>(StringComparer.OrdinalIgnoreCase);
             bool? mandatorySupportFound = null;
@@ -1160,7 +1163,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
 
                 if (attribute.SupportedFirst != null)
                 {
-                    if (attribute.UnsupportedFirst == null || attribute.UnsupportedFirst > attribute.SupportedFirst)
+                    if (attribute.UnsupportedFirst == null || attribute.UnsupportedFirst.Version >= attribute.SupportedFirst.Version)
                     {
                         // If only supported for current platform
                         supportedOnlyPlatforms.Add(platformName);
@@ -1169,20 +1172,20 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                         if (callSiteAttributes.TryGetValue(platformName, out var callSiteAttribute))
                         {
                             var attributeToCheck = attribute.SupportedSecond ?? attribute.SupportedFirst;
-                            if (MandatoryOsVersionsSuppressed(callSiteAttribute, attributeToCheck) && AllowList(callSiteAttribute))
+                            if (MandatoryOsVersionsSuppressed(callSiteAttribute, attributeToCheck.Version) && AllowList(callSiteAttribute))
                             {
                                 mandatorySupportFound = true;
                             }
-                            else
+                            else if (!sameAssembly || !attributeToCheck.Assembly || callSiteAttribute.UnsupportedFirst == null)
                             {
-                                diagnosticAttribute.SupportedSecond = (Version)attributeToCheck.Clone();
+                                diagnosticAttribute.SupportedFirst = attributeToCheck.Clone();
                             }
 
-                            if (attribute.UnsupportedFirst != null &&
-                                !(SuppressedByCallSiteSupported(attribute, callSiteAttribute.SupportedFirst) ||
-                                  SuppressedByCallSiteUnsupported(callSiteAttribute, attribute.UnsupportedFirst)))
+                            if (attribute.UnsupportedFirst != null && (!mandatorySupportFound.Value ||
+                               !(SuppressedByCallSiteSupported(attribute, callSiteAttribute.SupportedFirst?.Version) ||
+                                 SuppressedByCallSiteUnsupported(callSiteAttribute, attribute.UnsupportedFirst.Version))))
                             {
-                                diagnosticAttribute.UnsupportedFirst = (Version)attribute.UnsupportedFirst.Clone();
+                                diagnosticAttribute.UnsupportedFirst = attribute.UnsupportedFirst.Clone();
                             }
                         }
                     }
@@ -1192,37 +1195,34 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                         {
                             if (callSiteAttribute.SupportedFirst != null)
                             {
-                                if (!OptionalOsSupportSuppressed(callSiteAttribute, attribute))
+                                if (!OptionalOsSupportSuppressed(callSiteAttribute, attribute.SupportedFirst.Version))
                                 {
-                                    diagnosticAttribute.SupportedFirst = (Version)attribute.SupportedFirst.Clone();
+                                    diagnosticAttribute.SupportedFirst = attribute.SupportedFirst.Clone();
                                 }
 
                                 if (!UnsupportedFirstSuppressed(attribute, callSiteAttribute))
                                 {
-                                    diagnosticAttribute.UnsupportedFirst = (Version)attribute.UnsupportedFirst.Clone();
+                                    diagnosticAttribute.UnsupportedFirst = attribute.UnsupportedFirst.Clone();
                                 }
 
                                 if (attribute.UnsupportedSecond != null &&
                                     !UnsupportedSecondSuppressed(attribute, callSiteAttribute))
                                 {
-                                    diagnosticAttribute.UnsupportedSecond = (Version)attribute.UnsupportedSecond.Clone();
+                                    diagnosticAttribute.UnsupportedSecond = attribute.UnsupportedSecond.Clone();
                                 }
                             }
-                            else
+                            else if (msBuildPlatforms.Contains(platformName, StringComparer.OrdinalIgnoreCase))
                             {
-                                if (msBuildPlatforms.Contains(platformName, StringComparer.OrdinalIgnoreCase))
+                                if (!SuppressedByCallSiteUnsupported(callSiteAttribute, attribute.UnsupportedFirst.Version))
                                 {
-                                    if (!SuppressedByCallSiteUnsupported(callSiteAttribute, attribute.UnsupportedFirst))
-                                    {
-                                        diagnosticAttribute.SupportedFirst = (Version)attribute.SupportedFirst.Clone();
-                                        diagnosticAttribute.UnsupportedFirst = (Version)attribute.UnsupportedFirst.Clone();
-                                    }
+                                    diagnosticAttribute.SupportedFirst = attribute.SupportedFirst.Clone();
+                                    diagnosticAttribute.UnsupportedFirst = attribute.UnsupportedFirst.Clone();
+                                }
 
-                                    if (attribute.UnsupportedSecond != null && !SuppressedByCallSiteUnsupported(callSiteAttribute, attribute.UnsupportedSecond))
-                                    {
-                                        diagnosticAttribute.SupportedFirst = (Version)attribute.SupportedFirst.Clone();
-                                        diagnosticAttribute.UnsupportedSecond = (Version)attribute.UnsupportedSecond.Clone();
-                                    }
+                                if (attribute.UnsupportedSecond != null && !SuppressedByCallSiteUnsupported(callSiteAttribute, attribute.UnsupportedSecond.Version))
+                                {
+                                    diagnosticAttribute.SupportedFirst = attribute.SupportedFirst.Clone();
+                                    diagnosticAttribute.UnsupportedSecond = attribute.UnsupportedSecond.Clone();
                                 }
                             }
                         }
@@ -1233,52 +1233,44 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                             if (msBuildPlatforms.Contains(platformName, StringComparer.OrdinalIgnoreCase) &&
                                 callSiteAttributes.Any(ca => DenyList(ca.Value)))
                             {
-                                diagnosticAttribute.SupportedFirst = (Version)attribute.SupportedFirst.Clone();
+                                diagnosticAttribute.SupportedFirst = attribute.SupportedFirst.Clone();
                             }
                         }
                     }
                 }
-                else
+                else if (attribute.UnsupportedFirst != null) // Unsupported for this but supported all other
                 {
-                    if (attribute.UnsupportedFirst != null) // Unsupported for this but supported all other
+                    if (callSiteAttributes.TryGetValue(platformName, out var callSiteAttribute))
                     {
-                        if (callSiteAttributes.TryGetValue(platformName, out var callSiteAttribute))
+                        if (callSiteAttribute.SupportedFirst != null)
                         {
-                            if (callSiteAttribute.SupportedFirst != null)
+                            if (callSiteAttribute.UnsupportedFirst != null)
                             {
-                                if (callSiteAttribute.UnsupportedFirst != null)
+                                if (!SuppressedByCallSiteUnsupported(callSiteAttribute, attribute.UnsupportedFirst.Version))
                                 {
-                                    if (!SuppressedByCallSiteUnsupported(callSiteAttribute, attribute.UnsupportedFirst))
-                                    {
-                                        diagnosticAttribute.UnsupportedFirst = (Version)attribute.UnsupportedFirst.Clone();
-                                    }
-                                    else if (DenyList(callSiteAttribute))
-                                    {
-                                        diagnosticAttribute.UnsupportedFirst = (Version)attribute.UnsupportedFirst.Clone();
-                                    }
+                                    diagnosticAttribute.UnsupportedFirst = attribute.UnsupportedFirst.Clone();
                                 }
-                                else
+                                else if (DenyList(callSiteAttribute))
                                 {
-                                    diagnosticAttribute.UnsupportedFirst = (Version)attribute.UnsupportedFirst.Clone();
+                                    diagnosticAttribute.UnsupportedFirst = attribute.UnsupportedFirst.Clone();
                                 }
                             }
                             else
                             {
-                                if (msBuildPlatforms.Contains(platformName, StringComparer.OrdinalIgnoreCase))
-                                {
-                                    if (!SuppressedByCallSiteUnsupported(callSiteAttribute, attribute.UnsupportedFirst))
-                                    {
-                                        diagnosticAttribute.UnsupportedFirst = (Version)attribute.UnsupportedFirst.Clone();
-                                    }
-                                }
+                                diagnosticAttribute.UnsupportedFirst = attribute.UnsupportedFirst.Clone();
                             }
                         }
                         else if (msBuildPlatforms.Contains(platformName, StringComparer.OrdinalIgnoreCase) &&
-                            !callSiteAttributes.Values.Any(v => v.SupportedFirst != null))
+                                !SuppressedByCallSiteUnsupported(callSiteAttribute, attribute.UnsupportedFirst.Version))
                         {
-                            // if MsBuild list contain the platform and call site has no any other supported attribute it means global, so need to warn
-                            diagnosticAttribute.UnsupportedFirst = (Version)attribute.UnsupportedFirst.Clone();
+                            diagnosticAttribute.UnsupportedFirst = attribute.UnsupportedFirst.Clone();
                         }
+                    }
+                    else if (msBuildPlatforms.Contains(platformName, StringComparer.OrdinalIgnoreCase) &&
+                        !callSiteAttributes.Values.Any(v => v.SupportedFirst != null))
+                    {
+                        // if MsBuild list contain the platform and call site has no any other supported attribute it means global, so need to warn
+                        diagnosticAttribute.UnsupportedFirst = attribute.UnsupportedFirst.Clone();
                     }
                 }
 
@@ -1288,28 +1280,26 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                 }
             }
 
-            if (mandatorySupportFound.HasValue)
+            if (mandatorySupportFound.HasValue) // Allow or supported only list
             {
-                if (!mandatorySupportFound.Value)
+                if (!mandatorySupportFound.Value) // if no any support suppressed by call site, should warn for all suppport
                 {
                     foreach (var (name, attributes) in operationAttributes)
                     {
-                        if (attributes.SupportedFirst != null)
+                        if (attributes.SupportedFirst != null && !sameAssembly &&
+                            !notSuppressedAttributes.TryGetValue(name, out var diagnosticAttribute))
                         {
-                            if (!notSuppressedAttributes.TryGetValue(name, out var diagnosticAttribute))
-                            {
-                                diagnosticAttribute = new PlatformAttributes();
-                            }
+                            diagnosticAttribute = new PlatformAttributes();
                             CopyAllAttributes(diagnosticAttribute, attributes);
                             notSuppressedAttributes[name] = diagnosticAttribute;
                         }
                     }
                 }
 
-                // if supportedOnlyList then call site should not have any platform not listed in the support list
+                // if supported only list then call site should not have any platform not listed in the support list
                 foreach (var (platform, csAttributes) in callSiteAttributes)
                 {
-                    if (csAttributes.SupportedFirst != null &&
+                    if (csAttributes.SupportedFirst != null && AllowList(csAttributes) &&
                         !supportedOnlyPlatforms.Contains(platform))
                     {
                         foreach (var (name, version) in operationAttributes)
@@ -1330,44 +1320,44 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                     {
                         diagnosticAttribute = new PlatformAttributes();
                     }
-                    diagnosticAttribute.SupportedFirst = (Version)operationAttributes.SupportedFirst.Clone();
+                    diagnosticAttribute.SupportedFirst = operationAttributes.SupportedFirst.Clone();
                     notSuppressedAttributes[name] = diagnosticAttribute;
                 }
             }
 
             static bool UnsupportedSecondSuppressed(PlatformAttributes attribute, PlatformAttributes callSiteAttribute) =>
-                SuppressedByCallSiteSupported(attribute, callSiteAttribute.SupportedFirst) ||
-                SuppressedByCallSiteUnsupported(callSiteAttribute, attribute.UnsupportedSecond!);
+                SuppressedByCallSiteSupported(attribute, callSiteAttribute.SupportedFirst?.Version) ||
+                SuppressedByCallSiteUnsupported(callSiteAttribute, attribute.UnsupportedSecond!.Version);
 
             static bool SuppressedByCallSiteUnsupported(PlatformAttributes callSiteAttribute, Version unsupporteAttribute) =>
                 DenyList(callSiteAttribute) && callSiteAttribute.SupportedFirst != null ?
-                callSiteAttribute.UnsupportedSecond != null && unsupporteAttribute >= callSiteAttribute.UnsupportedSecond :
-                callSiteAttribute.UnsupportedFirst != null && unsupporteAttribute >= callSiteAttribute.UnsupportedFirst;
+                callSiteAttribute.UnsupportedSecond != null && unsupporteAttribute >= callSiteAttribute.UnsupportedSecond.Version :
+                callSiteAttribute.UnsupportedFirst != null && unsupporteAttribute >= callSiteAttribute.UnsupportedFirst.Version;
 
             static bool SuppressedByCallSiteSupported(PlatformAttributes attribute, Version? callSiteSupportedFirst) =>
-                callSiteSupportedFirst != null && callSiteSupportedFirst >= attribute.SupportedFirst! &&
-                attribute.SupportedSecond != null && callSiteSupportedFirst >= attribute.SupportedSecond;
+                callSiteSupportedFirst != null && callSiteSupportedFirst >= attribute.SupportedFirst!.Version &&
+                attribute.SupportedSecond != null && callSiteSupportedFirst >= attribute.SupportedSecond.Version;
 
             static bool UnsupportedFirstSuppressed(PlatformAttributes attribute, PlatformAttributes callSiteAttribute) =>
-                callSiteAttribute.SupportedFirst != null && callSiteAttribute.SupportedFirst >= attribute.SupportedFirst ||
-                SuppressedByCallSiteUnsupported(callSiteAttribute, attribute.UnsupportedFirst!);
+                callSiteAttribute.SupportedFirst != null && callSiteAttribute.SupportedFirst.Version >= attribute.SupportedFirst!.Version ||
+                SuppressedByCallSiteUnsupported(callSiteAttribute, attribute.UnsupportedFirst!.Version);
 
             // As optional if call site supports that platform, their versions should match
-            static bool OptionalOsSupportSuppressed(PlatformAttributes callSiteAttribute, PlatformAttributes attribute) =>
-                (callSiteAttribute.SupportedFirst == null || attribute.SupportedFirst <= callSiteAttribute.SupportedFirst) &&
-                (callSiteAttribute.SupportedSecond == null || attribute.SupportedFirst <= callSiteAttribute.SupportedSecond);
+            static bool OptionalOsSupportSuppressed(PlatformAttributes callSiteAttribute, Version supportedVersion) =>
+                (callSiteAttribute.SupportedFirst == null || supportedVersion <= callSiteAttribute.SupportedFirst.Version) &&
+                (callSiteAttribute.SupportedSecond == null || supportedVersion <= callSiteAttribute.SupportedSecond.Version);
 
             static bool MandatoryOsVersionsSuppressed(PlatformAttributes callSitePlatforms, Version checkingVersion) =>
-                callSitePlatforms.SupportedFirst != null && checkingVersion <= callSitePlatforms.SupportedFirst ||
-                callSitePlatforms.SupportedSecond != null && checkingVersion <= callSitePlatforms.SupportedSecond;
+                callSitePlatforms.SupportedFirst != null && checkingVersion <= callSitePlatforms.SupportedFirst.Version ||
+                callSitePlatforms.SupportedSecond != null && checkingVersion <= callSitePlatforms.SupportedSecond.Version;
         }
 
         private static PlatformAttributes CopyAllAttributes(PlatformAttributes copyTo, PlatformAttributes copyFrom)
         {
-            copyTo.SupportedFirst = (Version?)copyFrom.SupportedFirst?.Clone();
-            copyTo.SupportedSecond = (Version?)copyFrom.SupportedSecond?.Clone();
-            copyTo.UnsupportedFirst = (Version?)copyFrom.UnsupportedFirst?.Clone();
-            copyTo.UnsupportedSecond = (Version?)copyFrom.UnsupportedSecond?.Clone();
+            copyTo.SupportedFirst = copyFrom.SupportedFirst?.Clone();
+            copyTo.SupportedSecond = copyFrom.SupportedSecond?.Clone();
+            copyTo.UnsupportedFirst = copyFrom.UnsupportedFirst?.Clone();
+            copyTo.UnsupportedSecond = copyFrom.UnsupportedSecond?.Clone();
             return copyTo;
         }
 
@@ -1392,6 +1382,10 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                 if (checkParents)
                 {
                     var container = symbol.ContainingSymbol;
+                    if (symbol is IMethodSymbol method && method.IsAccessorMethod())
+                    {
+                        container = method.AssociatedSymbol;
+                    }
 
                     // Namespaces do not have attributes
                     while (container is INamespaceSymbol)
@@ -1406,20 +1400,21 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                     }
                 }
 
-                MergePlatformAttributes(symbol.GetAttributes(), ref attributes);
+                MergePlatformAttributes(symbol.GetAttributes(), ref attributes, assemblyAttribute: symbol is IAssemblySymbol);
                 attributes = platformSpecificMembers.GetOrAdd(symbol, attributes);
             }
 
             return attributes != null;
 
-            static void MergePlatformAttributes(ImmutableArray<AttributeData> immediateAttributes, ref SmallDictionary<string, PlatformAttributes>? parentAttributes)
+            static void MergePlatformAttributes(ImmutableArray<AttributeData> immediateAttributes,
+                ref SmallDictionary<string, PlatformAttributes>? parentAttributes, bool assemblyAttribute)
             {
                 SmallDictionary<string, PlatformAttributes>? childAttributes = null;
                 foreach (AttributeData attribute in immediateAttributes)
                 {
                     if (s_osPlatformAttributes.Contains(attribute.AttributeClass.Name))
                     {
-                        TryAddValidAttribute(ref childAttributes, attribute);
+                        TryAddValidAttribute(ref childAttributes, attribute, assemblyAttribute);
                     }
                 }
 
@@ -1444,23 +1439,23 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                                     if (childAttribute.UnsupportedFirst != null)
                                     {
                                         // but don't override existing unless narrowing the support
-                                        if (childAttribute.UnsupportedFirst < existing.UnsupportedFirst)
+                                        if (childAttribute.UnsupportedFirst.Version < existing.UnsupportedFirst!.Version)
                                         {
                                             existing.UnsupportedFirst = childAttribute.UnsupportedFirst;
                                             if (childAttribute.SupportedFirst != null && (existing.SupportedFirst == null ||
-                                                childAttribute.SupportedFirst > existing.SupportedFirst))
+                                                childAttribute.SupportedFirst.Version > existing.SupportedFirst.Version))
                                             {
                                                 existing.SupportedFirst = childAttribute.SupportedFirst;
                                             }
                                         }
                                         if (childAttribute.UnsupportedSecond != null && (existing.UnsupportedSecond == null ||
-                                             childAttribute.UnsupportedSecond < existing.UnsupportedSecond))
+                                             childAttribute.UnsupportedSecond.Version < existing.UnsupportedSecond.Version))
                                         {
                                             existing.UnsupportedSecond = childAttribute.UnsupportedSecond;
                                         }
                                         if (existing.SupportedFirst != null &&
                                             childAttribute.SupportedFirst != null &&
-                                            childAttribute.SupportedFirst > existing.SupportedFirst)
+                                            childAttribute.SupportedFirst.Version > existing.SupportedFirst.Version)
                                         {
                                             existing.SupportedFirst = childAttribute.SupportedFirst;
                                         }
@@ -1481,29 +1476,30 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                             {
                                 childAttribute = NormalizeAttribute(childAttribute);
                                 // only later versions could narrow, other versions ignored
-                                if (childAttribute.SupportedFirst > attributes.SupportedFirst &&
-                                    (attributes.SupportedSecond == null || attributes.SupportedSecond < childAttribute.SupportedFirst))
+                                if (childAttribute.SupportedFirst != null && childAttribute.SupportedFirst.Version >= attributes.SupportedFirst!.Version &&
+                                    (attributes.SupportedSecond == null || attributes.SupportedSecond.Version < childAttribute.SupportedFirst.Version))
                                 {
                                     attributes.SupportedSecond = childAttribute.SupportedFirst;
                                 }
 
                                 if (childAttribute.UnsupportedFirst != null)
                                 {
-                                    if (childAttribute.UnsupportedFirst <= attributes.SupportedFirst)
+                                    if (childAttribute.UnsupportedFirst.Version <= attributes.SupportedFirst!.Version)
                                     {
-                                        attributes.SupportedFirst = childAttribute.SupportedFirst > attributes.SupportedFirst ? childAttribute.SupportedFirst : null;
+                                        attributes.SupportedFirst = childAttribute.SupportedFirst != null && childAttribute.SupportedFirst.Version > attributes.SupportedFirst.Version ?
+                                            childAttribute.SupportedFirst : null;
                                         attributes.UnsupportedFirst = childAttribute.UnsupportedFirst;
                                     }
-                                    else if (attributes.UnsupportedFirst == null || attributes.UnsupportedFirst > childAttribute.UnsupportedFirst)
+                                    else if (attributes.UnsupportedFirst == null || attributes.UnsupportedFirst.Version > childAttribute.UnsupportedFirst.Version)
                                     {
                                         attributes.UnsupportedFirst = childAttribute.UnsupportedFirst;
                                     }
 
-                                    if (childAttribute.UnsupportedFirst <= attributes.SupportedSecond)
+                                    if (attributes.SupportedSecond != null && childAttribute.UnsupportedFirst.Version <= attributes.SupportedSecond.Version)
                                     {
                                         attributes.SupportedSecond = null;
                                     }
-                                    if (childAttribute.UnsupportedSecond != null && childAttribute.UnsupportedSecond > attributes.UnsupportedFirst)
+                                    if (childAttribute.UnsupportedSecond != null && childAttribute.UnsupportedSecond.Version > attributes.UnsupportedFirst.Version)
                                     {
                                         attributes.UnsupportedFirst = childAttribute.UnsupportedSecond;
                                     }
@@ -1535,7 +1531,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                         // For deny list UnsupportedSecond should only set if there is SupportedFirst verison between UnsupportedSecond and UnsupportedFirst  
                         if (attributes.SupportedFirst == null ||
                             (attributes.UnsupportedSecond != null &&
-                             attributes.SupportedFirst > attributes.UnsupportedSecond))
+                             attributes.SupportedFirst.Version > attributes.UnsupportedSecond.Version))
                         {
                             attributes.UnsupportedSecond = null;
                         }
@@ -1545,7 +1541,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
             }
         }
 
-        private static bool TryAddValidAttribute([NotNullWhen(true)] ref SmallDictionary<string, PlatformAttributes>? attributes, AttributeData attribute)
+        private static bool TryAddValidAttribute([NotNullWhen(true)] ref SmallDictionary<string, PlatformAttributes>? attributes, AttributeData attribute, bool assemblyLevel)
         {
             if (!attribute.ConstructorArguments.IsEmpty &&
                                 attribute.ConstructorArguments[0] is { } argument &&
@@ -1561,7 +1557,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                     attributes[platformName] = new PlatformAttributes();
                 }
 
-                AddAttribute(attribute.AttributeClass.Name, version, attributes[platformName]);
+                AddAttribute(attribute.AttributeClass.Name, version, attributes[platformName], assemblyLevel);
                 return true;
             }
 
@@ -1592,55 +1588,53 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
             return true;
         }
 
-        private static void AddAttribute(string name, Version version, PlatformAttributes attributes)
+        private static void AddAttribute(string name, Version version, PlatformAttributes attributes, bool assemblyLevel)
         {
             if (name == SupportedOSPlatformAttribute)
             {
-                AddOrUpdateSupportedAttribute(attributes, version);
+                AddOrUpdateSupportedAttribute(attributes, version, assemblyLevel);
             }
             else
             {
                 Debug.Assert(name == UnsupportedOSPlatformAttribute);
-                AddOrUpdateUnsupportedAttribute(attributes, version);
+                AddOrUpdateUnsupportedAttribute(attributes, version, assemblyLevel);
             }
 
-            static void AddOrUpdateUnsupportedAttribute(PlatformAttributes attributes, Version version)
+            static void AddOrUpdateUnsupportedAttribute(PlatformAttributes attributes, Version version, bool assemblyLevel)
             {
                 if (attributes.UnsupportedFirst != null)
                 {
-                    if (attributes.UnsupportedFirst > version)
+                    if (attributes.UnsupportedFirst.Version > version)
                     {
                         attributes.UnsupportedSecond = attributes.UnsupportedFirst;
-                        attributes.UnsupportedFirst = version;
+                        attributes.UnsupportedFirst = new VersionAndLevel(version, assemblyLevel); ;
                     }
-                    else
+                    else if (attributes.UnsupportedSecond == null ||
+                            attributes.UnsupportedSecond.Version > version)
                     {
-                        if (attributes.UnsupportedSecond == null ||
-                            attributes.UnsupportedSecond > version)
-                        {
-                            attributes.UnsupportedSecond = version;
-                        }
+                        attributes.UnsupportedSecond = new VersionAndLevel(version, assemblyLevel);
                     }
                 }
                 else
                 {
-                    attributes.UnsupportedFirst = version;
+                    attributes.UnsupportedFirst = new VersionAndLevel(version, assemblyLevel);
                 }
             }
 
-            static void AddOrUpdateSupportedAttribute(PlatformAttributes attributes, Version version)
+            static void AddOrUpdateSupportedAttribute(PlatformAttributes attributes, Version version, bool assemblyLevel)
             {
                 if (attributes.SupportedFirst != null)
                 {
                     // only keep lowest version, ignore other versions
-                    if (attributes.SupportedFirst > version)
+                    if (attributes.SupportedFirst.Version >= version)
                     {
-                        attributes.SupportedFirst = version;
+                        attributes.SupportedFirst.Version = version;
+                        attributes.SupportedFirst.Assembly = assemblyLevel;
                     }
                 }
                 else
                 {
-                    attributes.SupportedFirst = version;
+                    attributes.SupportedFirst = new VersionAndLevel(version, assemblyLevel); ;
                 }
             }
         }
@@ -1652,7 +1646,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
         /// <returns>true if it is allow list</returns>
         private static bool AllowList(PlatformAttributes attributes) =>
             attributes.SupportedFirst != null &&
-            (attributes.UnsupportedFirst == null || attributes.SupportedFirst <= attributes.UnsupportedFirst);
+            (attributes.UnsupportedFirst == null || attributes.SupportedFirst.Version <= attributes.UnsupportedFirst.Version);
 
         /// <summary>
         /// Determines if the attributes unsupported only for the platform (deny list)
@@ -1661,6 +1655,6 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
         /// <returns>true if it is deny list</returns>
         private static bool DenyList(PlatformAttributes attributes) =>
             attributes.UnsupportedFirst != null &&
-            (attributes.SupportedFirst == null || attributes.UnsupportedFirst < attributes.SupportedFirst);
+            (attributes.SupportedFirst == null || attributes.UnsupportedFirst.Version < attributes.SupportedFirst.Version);
     }
 }
