@@ -1881,7 +1881,7 @@ namespace PlatformCompatDemo
         public static void Main()
         {
             [|CrossPlatformApis.WindowsApi()|];
-            //var nonBrowser = new BrowserApis();
+            var nonBrowser = new BrowserApis();
         }
     }
 
@@ -3297,23 +3297,27 @@ using System.Runtime.Versioning;
 [assembly:SupportedOSPlatform(""ios"")]
 public class Test
 {
-    [SupportedOSPlatform(""windows"")]
+    [SupportedOSPlatform(""windows10.0"")]
     private void WindowsOnly() { }
 
     [SupportedOSPlatform(""ios"")]
     private void IosOnly () { }
 
+    private void NoAttribute () { }
+
     public void M1 ()
     {
         [|WindowsOnly()|];
         [|IosOnly()|];
+        NoAttribute();
     }
 
-    [SupportedOSPlatform(""Windows"")]
+    [SupportedOSPlatform(""Windows10.0"")]
     public void M2 ()
     {
-        WindowsOnly();
+       WindowsOnly();
        [|IosOnly()|];
+        NoAttribute();
     }
 
     [SupportedOSPlatform(""iOS"")]
@@ -3321,6 +3325,38 @@ public class Test
     {
         [|WindowsOnly()|];
         IosOnly();
+        NoAttribute();
+    }
+}";
+            await VerifyAnalyzerAsyncCs(source, s_msBuildPlatforms);
+        }
+
+        [Fact]
+        public async Task ContextReferencedApiWithinSameAssemblyAttributeNotWarn()
+        {
+            var source = @"
+using System.Runtime.Versioning;
+
+[assembly:SupportedOSPlatform(""windows"")] // Attribute from TFM target, can be ignored
+public class Test
+{
+    private string program;
+
+    public string CurrentProgram
+    {
+        get
+        {
+            return program; // should not warn
+        }
+        set
+        {
+            program = value;
+        }
+    }
+
+    public void M1()
+    {
+        program = ""hello"";
     }
 }";
             await VerifyAnalyzerAsyncCs(source, s_msBuildPlatforms);

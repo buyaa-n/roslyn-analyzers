@@ -1067,8 +1067,12 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                 if (TryGetOrCreatePlatformAttributes(symbol, checkParents, platformSpecificMembers, out var operationAttributes))
                 {
                     var containingSymbol = context.ContainingSymbol;
-                    bool sameAssembly = false;
+                    if (containingSymbol is IMethodSymbol method && method.IsAccessorMethod())
+                    {
+                        containingSymbol = method.AssociatedSymbol;
+                    }
 
+                    bool sameAssembly = false;
                     if (platformSpecificMembers.TryGetValue(symbol.ContainingAssembly, out var assemblyAttributes) && assemblyAttributes != null && AllowList(assemblyAttributes.First().Value) &&
                         platformSpecificMembers.TryGetValue(context.ContainingSymbol.ContainingAssembly, out var csAssemblyAttributes) && assemblyAttributes.Equals(csAssemblyAttributes))
                     {
@@ -1425,6 +1429,8 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
 
                 if (parentAttributes != null && parentAttributes.Any())
                 {
+                    var notFoundPlatforms = PooledHashSet<string>.GetInstance();
+                    bool supportFound = false;
                     foreach (var (platform, attributes) in parentAttributes)
                     {
                         if (DenyList(attributes) &&
@@ -1479,6 +1485,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                                 if (childAttribute.SupportedFirst != null && childAttribute.SupportedFirst.Version >= attributes.SupportedFirst!.Version &&
                                     (attributes.SupportedSecond == null || attributes.SupportedSecond.Version < childAttribute.SupportedFirst.Version))
                                 {
+                                    supportFound = true;
                                     attributes.SupportedSecond = childAttribute.SupportedFirst;
                                 }
 
@@ -1505,8 +1512,26 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                                     }
                                 }
                             }
-                            // other platform attributes are ignored as the list couldn't be extended
+                            else // not existing parent platforms might need to be removed
+                            {
+                                notFoundPlatforms.Add(platform);
+                            }
                         }
+                    }
+
+                    // For allow list if child narrowing supported platfroms by having less platforms support than parent,
+                    // not existing parent platforms should be removed
+                    if (supportFound && notFoundPlatforms.Count > 0)
+                    {
+                        childAttributes = new SmallDictionary<string, PlatformAttributes>();
+                        foreach (var (platform, attributes) in parentAttributes)
+                        {
+                            if (!notFoundPlatforms.Contains(platform))
+                            {
+                                childAttributes.Add(platform, attributes);
+                            }
+                        }
+                        parentAttributes = childAttributes;
                     }
                 }
                 else
