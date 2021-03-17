@@ -3,8 +3,8 @@
 using System;
 using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
-using System.Dynamic;
-using System.Linq;
+using System.IO;
+using System.Threading;
 using Analyzer.Utilities;
 using Analyzer.Utilities.Extensions;
 using Microsoft.CodeAnalysis;
@@ -17,22 +17,42 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
     public sealed class AnnotateNotSupprtedPlatforms : DiagnosticAnalyzer
     {
         internal const string RuleId = "CA1419";
-        private static readonly LocalizableString s_localizableTitle = "Annotate not supprted platform";
-        private static readonly LocalizableString s_localizableMessage = "Annotate not supprted platform";
-        private static readonly LocalizableString s_localizableDescription = "Annotate not supprted platform.";
+        private static readonly LocalizableString s_localizableTitle = "Annotate not supported platform";
+        private static readonly LocalizableString s_localizableOneLinerThrow = "'{0}' only throws PNSE and not annotated accordingly";
+        private static readonly LocalizableString s_localizableThrowWithinObsolete = "'{0}' throws PNSE and annotated with Obsolete";
+        private static readonly LocalizableString s_localizableMultiLinerThrow = "'{0}' throws PNSE and has no annotation";
+        private static readonly LocalizableString s_localizableDescription = "Annotate not supported platform.";
         private const string SupportedOSPlatformAttribute = nameof(SupportedOSPlatformAttribute);
         private const string UnsupportedOSPlatformAttribute = nameof(UnsupportedOSPlatformAttribute);
 
-        internal static DiagnosticDescriptor OnlySupportedCsReachable = DiagnosticDescriptorHelper.Create(RuleId,
+        internal static DiagnosticDescriptor OneLinerThrow = DiagnosticDescriptorHelper.Create(RuleId,
                                                                                       s_localizableTitle,
-                                                                                      s_localizableMessage,
+                                                                                      s_localizableOneLinerThrow,
                                                                                       DiagnosticCategory.Interoperability,
                                                                                       RuleLevel.BuildWarning,
                                                                                       description: s_localizableDescription,
                                                                                       isPortedFxCopRule: false,
                                                                                       isDataflowRule: false);
 
-        public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(OnlySupportedCsReachable);
+        internal static DiagnosticDescriptor ThrownWithinObsolete = DiagnosticDescriptorHelper.Create(RuleId,
+                                                                                      s_localizableTitle,
+                                                                                      s_localizableThrowWithinObsolete,
+                                                                                      DiagnosticCategory.Interoperability,
+                                                                                      RuleLevel.BuildWarning,
+                                                                                      description: s_localizableDescription,
+                                                                                      isPortedFxCopRule: false,
+                                                                                      isDataflowRule: false);
+
+        internal static DiagnosticDescriptor MultiLinerThrow = DiagnosticDescriptorHelper.Create(RuleId,
+                                                                                      s_localizableTitle,
+                                                                                      s_localizableMultiLinerThrow,
+                                                                                      DiagnosticCategory.Interoperability,
+                                                                                      RuleLevel.BuildWarning,
+                                                                                      description: s_localizableDescription,
+                                                                                      isPortedFxCopRule: false,
+                                                                                      isDataflowRule: false);
+
+        public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(OneLinerThrow, MultiLinerThrow, ThrownWithinObsolete);
 
         public override void Initialize(AnalysisContext context)
         {
@@ -41,31 +61,101 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
 
             context.RegisterCompilationStartAction(context =>
             {
-                if (!context.Compilation.TryGetOrCreateTypeByMetadataName(WellKnownTypeNames.SystemPlatformNotSupportedException, out var pNSExceptionType))
+                if (!context.Compilation.TryGetOrCreateTypeByMetadataName(WellKnownTypeNames.SystemPlatformNotSupportedException, out var pNSException) ||
+                    !context.Compilation.TryGetOrCreateTypeByMetadataName(WellKnownTypeNames.SystemObsoleteAttribute, out var obsoleteAttribute))
                 {
                     return;
                 }
 
-                context.RegisterOperationAction(context => AnalyzeOperationBlock(context, pNSExceptionType), OperationKind.ObjectCreation);
+                if (IsLowerThanNet5(context.Options, context.Compilation, context.CancellationToken))
+                {
+                    return;
+                }
+
+                context.RegisterOperationAction(context => AnalyzeOperationBlock(context, pNSException, obsoleteAttribute), OperationKind.Throw);
             });
         }
 
-
-        private static void AnalyzeOperationBlock(OperationAnalysisContext context, INamedTypeSymbol pNSExceptionType)
+        private static bool IsLowerThanNet5(AnalyzerOptions options, Compilation compilation, CancellationToken token)
         {
-            if (context.Operation is IObjectCreationOperation creation &&
-                creation.Type.Equals(pNSExceptionType, SymbolEqualityComparer.Default))
-            {
-                if (TryGetPlatformAttributes(creation.Constructor, out var attributes))
-                {
+            var tfmString = options.GetMSBuildPropertyValue(MSBuildPropertyOptionNames.TargetFramework, compilation, token);
 
-                }
+            if (tfmString?.Length >= 4 &&
+                tfmString.StartsWith("net", StringComparison.OrdinalIgnoreCase) &&
+                int.TryParse(tfmString[3].ToString(), out var major) &&
+                major >= 5)
+            {
+                return false;
             }
+
+            return true;
         }
 
-        private static bool TryGetPlatformAttributes(ISymbol symbol, out PlatformAttributes attributes)
+        private static void AnalyzeOperationBlock(OperationAnalysisContext context, INamedTypeSymbol pNSException, INamedTypeSymbol obsoleteAttribute)
         {
-            var container = symbol.ContainingSymbol;
+            var containingSymbol = context.ContainingSymbol;
+            if (containingSymbol.ToDisplayString().Contains("System.Runtime.Intrinsics", StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            var path = context.ContainingSymbol.Locations[0].SourceTree.FilePath;
+
+            if (path != null && Path.GetFileNameWithoutExtension(path).Contains("notsupported.cs", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            if (context.Operation is IThrowOperation throwOperation &&
+                throwOperation.GetThrownExceptionType() is ITypeSymbol createdException &&
+                createdException.Equals(pNSException, SymbolEqualityComparer.Default))
+            {
+                if (containingSymbol is IMethodSymbol method &&
+                    method.IsVirtual)
+                {
+                    return;
+                }
+
+                if (TryGetPlatformAttributes(context.ContainingSymbol, out var attributes, obsoleteAttribute))
+                {
+                    if (attributes.Obsolete && attributes.SupportedList.IsEmpty && attributes.UnupportedList.IsEmpty)
+                    {
+                        // context.ReportDiagnostic(throwOperation.CreateDiagnostic(ThrownWithinObsolete, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation))));
+                    }
+                    else // Maybe report what attributes it has?
+                    {
+                        //context.ReportDiagnostic(throwOperation.CreateDiagnostic(ThrownWithinObsolete, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation))));
+                    }
+                }
+                else
+                {
+                    var containingBlock = throwOperation.GetTopmostParentBlock();
+                    if (containingBlock != null && IsSingleStatementBody(containingBlock))
+                    {
+                        context.ReportDiagnostic(throwOperation.CreateDiagnostic(OneLinerThrow, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation))));
+                    }
+                    else
+                    {
+                        context.ReportDiagnostic(throwOperation.CreateDiagnostic(MultiLinerThrow, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation))));
+                    }
+                }
+            }
+
+            static bool IsSingleStatementBody(IBlockOperation body)
+            {
+                return body.Operations.Length == 1 ||
+                    (body.Operations.Length == 3 && body.Syntax.Language == LanguageNames.VisualBasic &&
+                     body.Operations[1] is ILabeledOperation labeledOp && labeledOp.IsImplicit &&
+                     body.Operations[2] is IReturnOperation returnOp && returnOp.IsImplicit);
+            }
+
+            static SymbolDisplayFormat GetLanguageSpecificFormat(IOperation operation) => operation.Language == LanguageNames.CSharp ?
+                SymbolDisplayFormat.CSharpShortErrorMessageFormat : SymbolDisplayFormat.VisualBasicShortErrorMessageFormat;
+        }
+
+        private static bool TryGetPlatformAttributes(ISymbol symbol, out PlatformAttributes attributes, INamedTypeSymbol obsoleteAttribute)
+        {
+            var container = symbol;
             attributes = new PlatformAttributes();
 
             while (container != null)
@@ -88,6 +178,11 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                     {
                         attributes.AddUnsupportedAttrbite(platform, version2);
                     }
+
+                    if (attribute.AttributeClass.Equals(obsoleteAttribute))
+                    {
+                        attributes.Obsolete = true;
+                    }
                 }
 
                 do
@@ -97,7 +192,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                 } while (container is INamespaceSymbol);
             }
 
-            return !attributes.SupportedAttributes.IsEmpty || !attributes.UnupportedAttributes.IsEmpty;
+            return attributes.Obsolete || !attributes.SupportedList.IsEmpty || !attributes.UnupportedList.IsEmpty;
         }
 
         private static bool TryParsePlatformNameAndVersion(string osString, out string osPlatformName, [NotNullWhen(true)] out Version? version)
@@ -126,24 +221,29 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
 
         private sealed class PlatformAttributes
         {
+            public PlatformAttributes()
+            {
+
+            }
             public void AddSupportedAttrbite(string platform, Version version)
             {
-                if (!SupportedAttributes.TryGetValue(platform, out var existing) || existing < version)
+                if (!SupportedList.TryGetValue(platform, out var existing) || existing < version)
                 {
-                    SupportedAttributes[platform] = version;
+                    SupportedList[platform] = version;
                 }
             }
 
             public void AddUnsupportedAttrbite(string platform, Version version)
             {
-                if (!UnupportedAttributes.TryGetValue(platform, out var existing) || existing > version)
+                if (!UnupportedList.TryGetValue(platform, out var existing) || existing > version)
                 {
-                    UnupportedAttributes[platform] = version;
+                    UnupportedList[platform] = version;
                 }
             }
 
-            public SmallDictionary<string, Version> SupportedAttributes { get; } = new(StringComparer.OrdinalIgnoreCase);
-            public SmallDictionary<string, Version> UnupportedAttributes { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public SmallDictionary<string, Version> SupportedList { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public SmallDictionary<string, Version> UnupportedList { get; } = new(StringComparer.OrdinalIgnoreCase);
+            public bool Obsolete { get; set; }
         }
     }
 }
