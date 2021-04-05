@@ -20,7 +20,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
 
     public sealed partial class PlatformCompatibilityAnalyzer
     {
-        private readonly struct PlatformMethodValue : IAbstractAnalysisValue, IEquatable<PlatformMethodValue>
+        internal readonly struct PlatformMethodValue : IAbstractAnalysisValue, IEquatable<PlatformMethodValue>
         {
             private PlatformMethodValue(string invokedPlatformCheckMethodName, string platformPropertyName, Version version, bool negated)
             {

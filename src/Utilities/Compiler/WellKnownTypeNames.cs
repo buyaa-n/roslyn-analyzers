@@ -285,6 +285,7 @@ namespace Analyzer.Utilities
         public const string SystemRuntimeSerializationFormattersSoapSoapFormatter = "System.Runtime.Serialization.Formatters.Soap.SoapFormatter";
         public const string SystemRuntimeSerializationIDeserializationCallback = "System.Runtime.Serialization.IDeserializationCallback";
         public const string SystemRuntimeSerializationIgnoreDataMemberAttribute = "System.Runtime.Serialization.IgnoreDataMemberAttribute";
+        public const string SystemRuntimeSerializationIObjectReference = "System.Runtime.Serialization.IObjectReference";
         public const string SystemRuntimeSerializationISerializable = "System.Runtime.Serialization.ISerializable";
         public const string SystemRuntimeSerializationJsonDataContractJsonSerializer = "System.Runtime.Serialization.Json";
         public const string SystemRuntimeSerializationKnownTypeAttribute = "System.Runtime.Serialization.KnownTypeAttribute";

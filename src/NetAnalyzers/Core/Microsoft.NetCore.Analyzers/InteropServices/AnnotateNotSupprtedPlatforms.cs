@@ -3,10 +3,11 @@
 using System;
 using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
-using System.IO;
+using System.Linq;
 using System.Threading;
 using Analyzer.Utilities;
 using Analyzer.Utilities.Extensions;
+using Analyzer.Utilities.PooledObjects;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Diagnostics;
 using Microsoft.CodeAnalysis.Operations;
@@ -18,8 +19,10 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
     {
         internal const string RuleId = "CA1419";
         private static readonly LocalizableString s_localizableTitle = "Annotate not supported platform";
-        private static readonly LocalizableString s_localizableOneLinerThrow = "'{0}' only throws PNSE and not annotated accordingly";
-        private static readonly LocalizableString s_localizableThrowWithinObsolete = "'{0}' throws PNSE and annotated with Obsolete";
+        private static readonly LocalizableString s_localizableOneLinerThrow = "'{0}' unconditionally throws PNSE and not annotated accordingly, reachable on {1}";
+        private static readonly LocalizableString s_localizableConditionallyThrowsFromSupported = "'{0}' throws PNSE on '{1}' and has no unsupported annotation and reachable on {2}";
+        private static readonly LocalizableString s_localizableConditionallyThrowsFromUnsupported = "'{0}' throws PNSE on '{1}' and has no unsupported annotation, unreachable on {2}";
+        private static readonly LocalizableString s_localizableConditionallyThrowsNotPlatformCheck = "'{0}' conditionally throws PNSE in non platform check";
         private static readonly LocalizableString s_localizableMultiLinerThrow = "'{0}' throws PNSE and has no annotation";
         private static readonly LocalizableString s_localizableDescription = "Annotate not supported platform.";
         private const string SupportedOSPlatformAttribute = nameof(SupportedOSPlatformAttribute);
@@ -34,14 +37,32 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                                                                                       isPortedFxCopRule: false,
                                                                                       isDataflowRule: false);
 
-        internal static DiagnosticDescriptor ThrownWithinObsolete = DiagnosticDescriptorHelper.Create(RuleId,
+        internal static DiagnosticDescriptor ConditionallyThrowsFromSupported = DiagnosticDescriptorHelper.Create(RuleId,
                                                                                       s_localizableTitle,
-                                                                                      s_localizableThrowWithinObsolete,
+                                                                                      s_localizableConditionallyThrowsFromSupported,
                                                                                       DiagnosticCategory.Interoperability,
                                                                                       RuleLevel.BuildWarning,
                                                                                       description: s_localizableDescription,
                                                                                       isPortedFxCopRule: false,
                                                                                       isDataflowRule: false);
+
+        internal static DiagnosticDescriptor ConditionallyThrowsFromUnsupported = DiagnosticDescriptorHelper.Create(RuleId,
+                                                                                      s_localizableTitle,
+                                                                                      s_localizableConditionallyThrowsFromUnsupported,
+                                                                                      DiagnosticCategory.Interoperability,
+                                                                                      RuleLevel.BuildWarning,
+                                                                                      description: s_localizableDescription,
+                                                                                      isPortedFxCopRule: false,
+                                                                                      isDataflowRule: false);
+
+        internal static DiagnosticDescriptor ConditionallyThrowsNonPlatformCheck = DiagnosticDescriptorHelper.Create(RuleId,
+                                                                              s_localizableTitle,
+                                                                              s_localizableConditionallyThrowsNotPlatformCheck,
+                                                                              DiagnosticCategory.Interoperability,
+                                                                              RuleLevel.BuildWarning,
+                                                                              description: s_localizableDescription,
+                                                                              isPortedFxCopRule: false,
+                                                                              isDataflowRule: false);
 
         internal static DiagnosticDescriptor MultiLinerThrow = DiagnosticDescriptorHelper.Create(RuleId,
                                                                                       s_localizableTitle,
@@ -52,7 +73,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                                                                                       isPortedFxCopRule: false,
                                                                                       isDataflowRule: false);
 
-        public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(OneLinerThrow, MultiLinerThrow, ThrownWithinObsolete);
+        public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(OneLinerThrow, MultiLinerThrow, ConditionallyThrowsFromSupported, ConditionallyThrowsFromUnsupported);
 
         public override void Initialize(AnalysisContext context)
         {
@@ -62,18 +83,58 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
             context.RegisterCompilationStartAction(context =>
             {
                 if (!context.Compilation.TryGetOrCreateTypeByMetadataName(WellKnownTypeNames.SystemPlatformNotSupportedException, out var pNSException) ||
-                    !context.Compilation.TryGetOrCreateTypeByMetadataName(WellKnownTypeNames.SystemObsoleteAttribute, out var obsoleteAttribute))
+                    !context.Compilation.TryGetOrCreateTypeByMetadataName(WellKnownTypeNames.SystemObsoleteAttribute, out var obsoleteAttribute) ||
+                    !context.Compilation.TryGetOrCreateTypeByMetadataName(WellKnownTypeNames.SystemOperatingSystem, out var operatingSystemType))
                 {
                     return;
                 }
-
                 if (IsLowerThanNet5(context.Options, context.Compilation, context.CancellationToken))
                 {
                     return;
                 }
 
-                context.RegisterOperationAction(context => AnalyzeOperationBlock(context, pNSException, obsoleteAttribute), OperationKind.Throw);
+                var getObjectData = context.Compilation.GetOrCreateTypeByMetadataName(WellKnownTypeNames.SystemRuntimeSerializationISerializable)?.
+                        GetMembers().OfType<IMethodSymbol>().FirstOrDefault();
+                var onDeserialization = context.Compilation.GetOrCreateTypeByMetadataName(WellKnownTypeNames.SystemRuntimeSerializationIDeserializationCallback)?.
+                        GetMembers().OfType<IMethodSymbol>().FirstOrDefault();
+                var getRealObject = context.Compilation.GetOrCreateTypeByMetadataName(WellKnownTypeNames.SystemRuntimeSerializationIObjectReference)?.
+                        GetMembers().OfType<IMethodSymbol>().FirstOrDefault();
+
+                var serializationInfoType = context.Compilation.GetOrCreateTypeByMetadataName(WellKnownTypeNames.SystemRuntimeSerializationSerializationInfo);
+                var streamingContextType = context.Compilation.GetOrCreateTypeByMetadataName(WellKnownTypeNames.SystemRuntimeSerializationStreamingContext);
+                var runtimeInformationType = context.Compilation.GetOrCreateTypeByMetadataName(WellKnownTypeNames.SystemRuntimeInteropServicesRuntimeInformation);
+                var osPlatformType = context.Compilation.GetOrCreateTypeByMetadataName(WellKnownTypeNames.SystemRuntimeInteropServicesOSPlatform);
+
+                var runtimeIsOSPlatformMethod = runtimeInformationType?.GetMembers().OfType<IMethodSymbol>().FirstOrDefault(m =>
+                        "IsOSPlatform" == m.Name &&
+                        m.IsStatic &&
+                        m.ReturnType.SpecialType == SpecialType.System_Boolean &&
+                        m.Parameters.Length == 1);
+
+                var guardMethods = GetOperatingSystemGuardMethods(runtimeIsOSPlatformMethod, operatingSystemType);
+
+                context.RegisterOperationAction(context => AnalyzeOperationBlock(context, pNSException, obsoleteAttribute, getObjectData,
+                    onDeserialization, getRealObject, serializationInfoType, streamingContextType, guardMethods, osPlatformType), OperationKind.Throw);
             });
+
+            static ImmutableArray<IMethodSymbol> GetOperatingSystemGuardMethods(IMethodSymbol? runtimeIsOSPlatformMethod, INamedTypeSymbol operatingSystemType)
+            {
+                var methods = operatingSystemType.GetMembers().OfType<IMethodSymbol>().Where(m =>
+                    m.IsStatic &&
+                    m.ReturnType.SpecialType == SpecialType.System_Boolean &&
+                    ("IsOSPlatform" == m.Name) || NameAndParametersValid(m)).
+                    ToImmutableArray();
+
+                if (runtimeIsOSPlatformMethod != null)
+                {
+                    return methods.Add(runtimeIsOSPlatformMethod);
+                }
+
+                return methods;
+            }
+
+            static bool NameAndParametersValid(IMethodSymbol method) => method.Name.StartsWith("Is", StringComparison.Ordinal) &&
+                    (method.Parameters.Length == 0 || method.Name.EndsWith("VersionAtLeast", StringComparison.Ordinal));
         }
 
         private static bool IsLowerThanNet5(AnalyzerOptions options, Compilation compilation, CancellationToken token)
@@ -91,7 +152,9 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
             return true;
         }
 
-        private static void AnalyzeOperationBlock(OperationAnalysisContext context, INamedTypeSymbol pNSException, INamedTypeSymbol obsoleteAttribute)
+        private static void AnalyzeOperationBlock(OperationAnalysisContext context, INamedTypeSymbol pNSException, INamedTypeSymbol obsoleteAttribute,
+            IMethodSymbol? getObjectData, IMethodSymbol? onDeserialization, IMethodSymbol? getRealObject, INamedTypeSymbol? serializationInfoType,
+            INamedTypeSymbol? streamingContextType, ImmutableArray<IMethodSymbol> guardMethods, INamedTypeSymbol? osPlatformType)
         {
             var containingSymbol = context.ContainingSymbol;
             if (containingSymbol.ToDisplayString().Contains("System.Runtime.Intrinsics", StringComparison.Ordinal))
@@ -99,40 +162,94 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                 return;
             }
 
-            var path = context.ContainingSymbol.Locations[0].SourceTree.FilePath;
+            /*var path = context.ContainingSymbol.Locations[0].SourceTree.FilePath;
 
             if (path != null && Path.GetFileNameWithoutExtension(path).Contains("notsupported.cs", StringComparison.OrdinalIgnoreCase))
             {
                 return;
-            }
+            }*/
 
             if (context.Operation is IThrowOperation throwOperation &&
                 throwOperation.GetThrownExceptionType() is ITypeSymbol createdException &&
                 createdException.Equals(pNSException, SymbolEqualityComparer.Default))
             {
-                if (containingSymbol is IMethodSymbol method &&
-                    method.IsVirtual)
+                if (containingSymbol is IMethodSymbol method)
                 {
-                    return;
+                    if (method.IsVirtual ||
+                        method.IsOverrideOrImplementationOfInterfaceMember(getObjectData) ||
+                        method.IsOverrideOrImplementationOfInterfaceMember(onDeserialization) ||
+                        method.IsOverrideOrImplementationOfInterfaceMember(getRealObject) ||
+                        method.IsSerializationConstructor(serializationInfoType, streamingContextType))
+                    {
+                        return;
+                    }
                 }
 
                 if (TryGetPlatformAttributes(context.ContainingSymbol, out var attributes, obsoleteAttribute))
                 {
-                    if (attributes.Obsolete && attributes.SupportedList.IsEmpty && attributes.UnupportedList.IsEmpty)
+                    if (!attributes.SupportedList.IsEmpty && !attributes.Obsolete)
                     {
-                        // context.ReportDiagnostic(throwOperation.CreateDiagnostic(ThrownWithinObsolete, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation))));
+                        if (attributes.UnupportedList.IsEmpty)
+                        {
+                            var containingBlock = throwOperation.GetTopmostParentBlock();
+                            if (containingBlock != null && IsSingleStatement(containingBlock))
+                            {
+                                if (IsConditional(containingBlock, out var conditional))
+                                {
+                                    if (IsPlatformCheckMatch(conditional.Condition, guardMethods, osPlatformType, attributes.SupportedList, out var platform))
+                                    {
+                                        context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsFromSupported,
+                                            context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), platform, attributes.SupportedList));
+                                    }
+                                    // TODO check the condition ;
+                                }
+                                else
+                                {
+                                    context.ReportDiagnostic(throwOperation.CreateDiagnostic(OneLinerThrow,
+                                        context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), attributes.SupportedList));
+                                }
+                            }
+                        }
                     }
-                    else // Maybe report what attributes it has?
+                    else if (!attributes.UnupportedList.IsEmpty && !attributes.Obsolete)
                     {
-                        //context.ReportDiagnostic(throwOperation.CreateDiagnostic(ThrownWithinObsolete, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation))));
+                        if (attributes.SupportedList.IsEmpty)
+                        {
+                            var containingBlock = throwOperation.GetTopmostParentBlock();
+                            if (containingBlock != null && !IsSingleStatement(containingBlock))
+                            {
+                                if (IsConditional(containingBlock, out var conditional))
+                                {
+
+                                    context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsFromUnsupported,
+                                        context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation))));
+                                }
+                            }
+                        }
                     }
                 }
                 else
                 {
                     var containingBlock = throwOperation.GetTopmostParentBlock();
-                    if (containingBlock != null && IsSingleStatementBody(containingBlock))
+                    if (containingBlock != null && IsSingleStatement(containingBlock))
                     {
-                        context.ReportDiagnostic(throwOperation.CreateDiagnostic(OneLinerThrow, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation))));
+                        if (IsConditional(containingBlock, out var conditional))
+                        {
+                            if (IsPlatformCheckMatch(conditional.Condition, guardMethods, osPlatformType, attributes.SupportedList, out var platform))
+                            {
+                                context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsFromSupported,
+                                    context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), platform, "cross platform"));
+                            }
+                            else
+                            {
+                                context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsNonPlatformCheck,
+                                    context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation))));
+                            }
+                        }
+                        else
+                        {
+                            context.ReportDiagnostic(throwOperation.CreateDiagnostic(OneLinerThrow, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation))));
+                        }
                     }
                     else
                     {
@@ -141,12 +258,42 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                 }
             }
 
-            static bool IsSingleStatementBody(IBlockOperation body)
+            static bool IsPlatformCheckMatch(IOperation condition, ImmutableArray<IMethodSymbol> guardMethods,
+                INamedTypeSymbol? osPlatformType, SmallDictionary<string, Version> supportedList, [NotNullWhen(true)] out string? platform)
             {
-                return body.Operations.Length == 1 ||
-                    (body.Operations.Length == 3 && body.Syntax.Language == LanguageNames.VisualBasic &&
+                platform = null;
+                if (condition is IInvocationOperation invocation && guardMethods.Contains(invocation.TargetMethod.OriginalDefinition))
+                {
+                    using var infosBuilder = ArrayBuilder<PlatformCompatibilityAnalyzer.PlatformMethodValue>.GetInstance();
+                    if (PlatformCompatibilityAnalyzer.PlatformMethodValue.TryDecode(invocation.TargetMethod, invocation.Arguments, null, osPlatformType, infosBuilder))
+                    {
+                        platform = infosBuilder[0].PlatformName;
+                        if (supportedList.ContainsKey(platform))
+                        {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }
+
+            static bool IsSingleStatement(IBlockOperation body)
+            {
+                return body.Operations.Length == 1 || (body.Operations.Length == 3 && body.Syntax.Language == LanguageNames.VisualBasic &&
                      body.Operations[1] is ILabeledOperation labeledOp && labeledOp.IsImplicit &&
                      body.Operations[2] is IReturnOperation returnOp && returnOp.IsImplicit);
+            }
+
+            static bool IsConditional(IBlockOperation body, [NotNullWhen(true)] out IConditionalOperation? conditional)
+            {
+                conditional = null;
+                if (body.Operations[0] is IConditionalOperation cOperations)
+                {
+                    conditional = cOperations;
+                    return true;
+                }
+
+                return false;
             }
 
             static SymbolDisplayFormat GetLanguageSpecificFormat(IOperation operation) => operation.Language == LanguageNames.CSharp ?

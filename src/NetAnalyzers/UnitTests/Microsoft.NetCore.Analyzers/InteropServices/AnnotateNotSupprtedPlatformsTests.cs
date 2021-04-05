@@ -57,10 +57,21 @@ using System.Runtime.InteropServices;
 
 public class Test
 {
+    public void MethodWithMultilineConditional(int a)
+    {
+        if (a == 0)
+        {
+            a=1;
+            throw new PlatformNotSupportedException(); // 'Test.MethodWithMultilineConditional(int)' conditionally throws PNSE in non platform check
+        }
+    }    
+
     public void MethodWithConditional()
     {
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) // Somehow this accounted as one liner (Almost one liner though)
+        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
             [|throw new PlatformNotSupportedException();|] // 'Test.MethodWithConditional()' only throws PNSE and not annotated accordingly
+        }
     }
 
     public void MethodWithOtherStatement()
@@ -92,7 +103,41 @@ public class Test
         }
 
         [Fact]
-        public async Task ThrowsPNSEWithAttribute()
+        public async Task IgnoreDefaultCase()
+        {
+            var csSource = @"
+using System;
+using System.Runtime.InteropServices;
+
+public class Test
+{
+    public void MethodWithMultilineConditional(int a)
+    {
+        switch (a)
+        {
+            case 1 : a++; break;
+            case 2: a+=2; break;
+            default: throw new PlatformNotSupportedException(); 
+        }
+    }    
+
+    public void MethodWithConditional(int a)
+    {
+        switch (a)
+        {
+            case 1 : a++; break;
+            case 2 : a+=2; break;
+            case 3 : throw new PlatformNotSupportedException(""message"");
+            default : a=0; 
+        }
+    }
+}";
+
+            await VerifyAnalyzerAsyncCs(csSource);
+        }
+
+        [Fact]
+        public async Task ThrowsPNSEWithAttributeAndConditional()
         {
             var csSource = @"
 using System;
@@ -102,22 +147,62 @@ using System.Runtime.InteropServices;
 public class Test
 {
     [SupportedOSPlatform(""Linux"")]
-    public void MethodWithConditional()
+    public void MethodWithConditionalAndSupportedAttribute()
     {
-        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) 
-            throw new PlatformNotSupportedException(); // 'Test.MethodWithConditional()' only throws PNSE and not annotated accordingly
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) 
+            throw new PlatformNotSupportedException();
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) 
+            [|throw new PlatformNotSupportedException();|]
     }
 
     [UnsupportedOSPlatform(""Linux"")]
-    public void OneLinerThrow() 
+    public void MethodWithConditionalAndUnsupportedAttribute()
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) 
+            [|throw new PlatformNotSupportedException();|]
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) 
+            throw new PlatformNotSupportedException();
+    }
+}";
+            await VerifyAnalyzerAsyncCsNet50(csSource);
+        }
+
+        [Fact]
+        public async Task ThrowsPNSEWithAttributeOneLiner()
+        {
+            var csSource = @"
+using System;
+using System.Runtime.Versioning;
+using System.Runtime.InteropServices;
+
+public class Test
+{
+    [SupportedOSPlatform(""Linux"")]
+    public void OneLinerThrowWithSupprtedAttribute() 
+    {
+        [|throw new PlatformNotSupportedException();|]
+    }
+
+    [UnsupportedOSPlatform(""Linux"")]
+    public void OneLinerThrowWithUnsupprtedAttribute() 
     {
         throw new PlatformNotSupportedException();
     }
 
+    [SupportedOSPlatform(""Linux"")]
     [Obsolete(""Does not work in .Net Core"")]
-    public void ObsoleteOneLinerThrow() 
+    public void SupportedObsoleteOneLinerThrow() 
     {
-        throw new PlatformNotSupportedException(); // Should we report here? 'Test.ObsoleteOneLinerThrow()' throws PNSE and annotated with Obsolete
+        throw new PlatformNotSupportedException();
+    }
+
+    [UnsupportedOSPlatform(""Linux"")]
+    [Obsolete(""Does not work in .Net Core"")]
+    public void UnsupportedObsoleteOneLinerThrow() 
+    {
+        throw new PlatformNotSupportedException();
     }
 }";
 
@@ -125,12 +210,10 @@ public class Test
         }
 
         [Fact]
-        public async Task ThrowsPNSEWithinIntrinsics()
+        public async Task ThrowsPNSEWithinIntrinsicsIgnored()
         {
             var csSource = @"
 using System;
-using System.Runtime.Versioning;
-using System.Runtime.InteropServices;
 
 namespace System.Runtime.Intrinsics.Arm
 {
@@ -138,6 +221,60 @@ namespace System.Runtime.Intrinsics.Arm
     {
         public static int LeadingSignCount(int value) { throw new PlatformNotSupportedException(); }
         public static ulong MultiplyHigh(ulong left, ulong right) { throw new PlatformNotSupportedException(); }
+    }
+}";
+
+            await VerifyAnalyzerAsyncCsNet50(csSource);
+        }
+
+        [Fact]
+        public async Task ThrowsPNSEWithinISerializableImplementation()
+        {
+            var csSource = @"
+using System;
+using System.Runtime.Serialization;
+
+namespace ns
+{
+    public class Test : ISerializable, IDeserializationCallback, IObjectReference
+    {
+        public static int M1(int value) { [|throw new PlatformNotSupportedException();|] }
+        void IDeserializationCallback.OnDeserialization(object sender) =>
+            throw new PlatformNotSupportedException();
+        public void GetObjectData(SerializationInfo info, StreamingContext context) =>
+            throw new PlatformNotSupportedException();
+        public object GetRealObject(StreamingContext context) =>
+            throw new PlatformNotSupportedException();
+    }
+}";
+
+            await VerifyAnalyzerAsyncCsNet50(csSource);
+        }
+
+        [Fact]
+        public async Task ThrowsPNSEWithinParentImplementedISerializable()
+        {
+            var csSource = @"
+using System;
+using System.Runtime.Serialization;
+using System.Collections;
+
+namespace ns
+{
+    class Program
+    {
+        private sealed class SyncHashtable : Hashtable
+        {
+            internal SyncHashtable(SerializationInfo info, StreamingContext context) : base(info, context)
+            {
+                throw new PlatformNotSupportedException();
+            }
+
+            public override void GetObjectData(SerializationInfo info, StreamingContext context)
+            {
+                throw new PlatformNotSupportedException();
+            }
+        }
     }
 }";
 
