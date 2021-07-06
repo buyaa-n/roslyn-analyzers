@@ -32,6 +32,8 @@ namespace Microsoft.CodeAnalysis.PublicApiAnalyzers
         internal const string InvalidReasonMisplacedNullableEnable = "The '#nullable enable' marker can only appear as the first line in the shipped API file";
         internal const string PublicApiIsShippedPropertyBagKey = "PublicAPIIsShipped";
 
+        private const char ObliviousMarker = '~';
+
         /// <summary>
         /// Boolean option to configure if public API analyzer should bail out silently if public API files are missing.
         /// </summary>
@@ -80,6 +82,16 @@ namespace Microsoft.CodeAnalysis.PublicApiAnalyzers
             description: new LocalizableResourceString(nameof(PublicApiAnalyzerResources.RemoveDeletedApiDescription), PublicApiAnalyzerResources.ResourceManager, typeof(PublicApiAnalyzerResources)),
             helpLinkUri: "https://github.com/dotnet/roslyn-analyzers/blob/main/src/PublicApiAnalyzers/PublicApiAnalyzers.Help.md",
             customTags: WellKnownDiagnosticTagsExtensions.CompilationEndAndTelemetry);
+
+        internal static readonly DiagnosticDescriptor RemovedApiIsNotActuallyRemovedRule = new(
+           id: DiagnosticIds.RemovedApiIsNotActuallyRemovedRuleId,
+           title: new LocalizableResourceString(nameof(PublicApiAnalyzerResources.RemovedApiIsNotActuallyRemovedTitle), PublicApiAnalyzerResources.ResourceManager, typeof(PublicApiAnalyzerResources)),
+           messageFormat: new LocalizableResourceString(nameof(PublicApiAnalyzerResources.RemovedApiIsNotActuallyRemovedMessage), PublicApiAnalyzerResources.ResourceManager, typeof(PublicApiAnalyzerResources)),
+           category: "ApiDesign",
+           defaultSeverity: DiagnosticSeverity.Warning,
+           isEnabledByDefault: true,
+           helpLinkUri: "https://github.com/dotnet/roslyn-analyzers/blob/main/src/PublicApiAnalyzers/PublicApiAnalyzers.Help.md",
+           customTags: WellKnownDiagnosticTagsExtensions.CompilationEndAndTelemetry);
 
         internal static readonly DiagnosticDescriptor ExposedNoninstantiableType = new(
             id: DiagnosticIds.ExposedNoninstantiableTypeRuleId,
@@ -198,7 +210,7 @@ namespace Microsoft.CodeAnalysis.PublicApiAnalyzers
         public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics =>
             ImmutableArray.Create(DeclareNewApiRule, AnnotateApiRule, ObliviousApiRule, RemoveDeletedApiRule, ExposedNoninstantiableType,
                 PublicApiFilesInvalid, PublicApiFileMissing, DuplicateSymbolInApiFiles, AvoidMultipleOverloadsWithOptionalParameters,
-                OverloadWithOptionalParametersShouldHaveMostParameters, ShouldAnnotateApiFilesRule);
+                OverloadWithOptionalParametersShouldHaveMostParameters, ShouldAnnotateApiFilesRule, RemovedApiIsNotActuallyRemovedRule);
 
         public override void Initialize(AnalysisContext context)
         {
@@ -308,8 +320,8 @@ namespace Microsoft.CodeAnalysis.PublicApiAnalyzers
                 return false;
             }
 
-            shippedData = ReadApiData(shippedText.Path, shippedText.GetText(cancellationToken), isShippedApi: true);
-            unshippedData = ReadApiData(unshippedText.Path, unshippedText.GetText(cancellationToken), isShippedApi: false);
+            shippedData = ReadApiData(shippedText.Value.path, shippedText.Value.text, isShippedApi: true);
+            unshippedData = ReadApiData(unshippedText.Value.path, unshippedText.Value.text, isShippedApi: false);
             return true;
         }
 
@@ -366,27 +378,41 @@ namespace Microsoft.CodeAnalysis.PublicApiAnalyzers
         private static bool TryGetApiText(
             ImmutableArray<AdditionalText> additionalTexts,
             CancellationToken cancellationToken,
-            [NotNullWhen(returnValue: true)] out AdditionalText? shippedText,
-            [NotNullWhen(returnValue: true)] out AdditionalText? unshippedText)
+            [NotNullWhen(returnValue: true)] out (string path, SourceText text)? shippedText,
+            [NotNullWhen(returnValue: true)] out (string path, SourceText text)? unshippedText)
         {
             shippedText = null;
             unshippedText = null;
 
             StringComparer comparer = StringComparer.Ordinal;
-            foreach (AdditionalText text in additionalTexts)
+            foreach (AdditionalText additionalText in additionalTexts)
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
-                string fileName = Path.GetFileName(text.Path);
-                if (comparer.Equals(fileName, ShippedFileName))
-                {
-                    shippedText = text;
-                    continue;
-                }
+                string fileName = Path.GetFileName(additionalText.Path);
 
-                if (comparer.Equals(fileName, UnshippedFileName))
+                bool isShippedFile = comparer.Equals(fileName, ShippedFileName);
+                bool isUnshippedFile = comparer.Equals(fileName, UnshippedFileName);
+
+                if (isShippedFile || isUnshippedFile)
                 {
-                    unshippedText = text;
+                    SourceText text = additionalText.GetText(cancellationToken);
+
+                    if (text == null)
+                    {
+                        continue;
+                    }
+
+                    var data = (additionalText.Path, text);
+                    if (isShippedFile)
+                    {
+                        shippedText = data;
+                    }
+
+                    if (isUnshippedFile)
+                    {
+                        unshippedText = data;
+                    }
                     continue;
                 }
             }
@@ -424,7 +450,8 @@ namespace Microsoft.CodeAnalysis.PublicApiAnalyzers
         {
             foreach (ApiLine cur in apiList)
             {
-                if (publicApiMap.TryGetValue(cur.Text, out ApiLine existingLine))
+                string textWithoutOblivious = cur.Text.TrimStart(ObliviousMarker);
+                if (publicApiMap.TryGetValue(textWithoutOblivious, out ApiLine existingLine))
                 {
                     LinePositionSpan existingLinePositionSpan = existingLine.SourceText.Lines.GetLinePositionSpan(existingLine.Span);
                     Location existingLocation = Location.Create(existingLine.Path, existingLine.Span, existingLinePositionSpan);
@@ -435,7 +462,7 @@ namespace Microsoft.CodeAnalysis.PublicApiAnalyzers
                 }
                 else
                 {
-                    publicApiMap.Add(cur.Text, cur);
+                    publicApiMap.Add(textWithoutOblivious, cur);
                 }
             }
         }
