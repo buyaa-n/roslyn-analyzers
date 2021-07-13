@@ -4,7 +4,6 @@ using System;
 using System.Collections.Immutable;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
-using System.Threading;
 using Analyzer.Utilities;
 using Analyzer.Utilities.Extensions;
 using Analyzer.Utilities.PooledObjects;
@@ -20,17 +19,28 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
         internal const string RuleId = "CA1419";
         private static readonly LocalizableString s_localizableTitle = "Annotate not supported platform";
         private static readonly LocalizableString s_localizableOneLinerThrow = "'{0}' unconditionally throws PNSE and not annotated accordingly, reachable on {1}";
+        private static readonly LocalizableString s_localizableOneLinerThrowUnsupported = "'{0}' unconditionally throws PNSE and not annotated accordingly, unreachable on {1}";
         private static readonly LocalizableString s_localizableConditionallyThrowsFromSupported = "'{0}' throws PNSE on '{1}' and has no unsupported annotation and reachable on {2}";
         private static readonly LocalizableString s_localizableConditionallyThrowsFromUnsupported = "'{0}' throws PNSE on '{1}' and has no unsupported annotation, unreachable on {2}";
         private static readonly LocalizableString s_localizableConditionallyThrowsNotPlatformCheck = "'{0}' conditionally throws PNSE in non platform check";
-        private static readonly LocalizableString s_localizableMultiLinerThrow = "'{0}' throws PNSE and has no annotation";
+        private static readonly LocalizableString s_localizableMultiLinerThrowReachable = "'{0}' throws PNSE and has no annotation, reachable on {1}";
+        private static readonly LocalizableString s_localizableMultiLinerThrowUnreachable = "'{0}' throws PNSE and has no annotation, unreachable on {1}";
         private static readonly LocalizableString s_localizableDescription = "Annotate not supported platform.";
         private const string SupportedOSPlatformAttribute = nameof(SupportedOSPlatformAttribute);
         private const string UnsupportedOSPlatformAttribute = nameof(UnsupportedOSPlatformAttribute);
 
-        internal static DiagnosticDescriptor OneLinerThrow = DiagnosticDescriptorHelper.Create(RuleId,
+        internal static DiagnosticDescriptor OneLinerThrowReachable = DiagnosticDescriptorHelper.Create(RuleId,
                                                                                       s_localizableTitle,
                                                                                       s_localizableOneLinerThrow,
+                                                                                      DiagnosticCategory.Interoperability,
+                                                                                      RuleLevel.BuildWarning,
+                                                                                      description: s_localizableDescription,
+                                                                                      isPortedFxCopRule: false,
+                                                                                      isDataflowRule: false);
+
+        internal static DiagnosticDescriptor OneLinerThrowUnreachable = DiagnosticDescriptorHelper.Create(RuleId,
+                                                                                      s_localizableTitle,
+                                                                                      s_localizableOneLinerThrowUnsupported,
                                                                                       DiagnosticCategory.Interoperability,
                                                                                       RuleLevel.BuildWarning,
                                                                                       description: s_localizableDescription,
@@ -64,16 +74,24 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                                                                               isPortedFxCopRule: false,
                                                                               isDataflowRule: false);
 
-        internal static DiagnosticDescriptor MultiLinerThrow = DiagnosticDescriptorHelper.Create(RuleId,
+        internal static DiagnosticDescriptor MultiLinerThrowReachable = DiagnosticDescriptorHelper.Create(RuleId,
                                                                                       s_localizableTitle,
-                                                                                      s_localizableMultiLinerThrow,
+                                                                                      s_localizableMultiLinerThrowReachable,
+                                                                                      DiagnosticCategory.Interoperability,
+                                                                                      RuleLevel.BuildWarning,
+                                                                                      description: s_localizableDescription,
+                                                                                      isPortedFxCopRule: false,
+                                                                                      isDataflowRule: false);
+        internal static DiagnosticDescriptor MultiLinerThrowUnreachable = DiagnosticDescriptorHelper.Create(RuleId,
+                                                                                      s_localizableTitle,
+                                                                                      s_localizableMultiLinerThrowUnreachable,
                                                                                       DiagnosticCategory.Interoperability,
                                                                                       RuleLevel.BuildWarning,
                                                                                       description: s_localizableDescription,
                                                                                       isPortedFxCopRule: false,
                                                                                       isDataflowRule: false);
 
-        public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(OneLinerThrow, MultiLinerThrow, ConditionallyThrowsFromSupported, ConditionallyThrowsFromUnsupported);
+        public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(OneLinerThrowReachable, MultiLinerThrowReachable, ConditionallyThrowsFromSupported, ConditionallyThrowsFromUnsupported);
 
         public override void Initialize(AnalysisContext context)
         {
@@ -88,7 +106,8 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                 {
                     return;
                 }
-                if (IsLowerThanNet5(context.Options, context.Compilation, context.CancellationToken))
+
+                if (IsLowerThanNet5(context.Options, context.Compilation))
                 {
                     return;
                 }
@@ -137,19 +156,19 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                     (method.Parameters.Length == 0 || method.Name.EndsWith("VersionAtLeast", StringComparison.Ordinal));
         }
 
-        private static bool IsLowerThanNet5(AnalyzerOptions options, Compilation compilation, CancellationToken token)
+        private static bool IsLowerThanNet5(AnalyzerOptions options, Compilation compilation)
         {
-            var tfmString = options.GetMSBuildPropertyValue(MSBuildPropertyOptionNames.TargetFramework, compilation, token);
+            var tfmString = options.GetMSBuildPropertyValue(MSBuildPropertyOptionNames.TargetFramework, compilation);
 
             if (tfmString?.Length >= 4 &&
                 tfmString.StartsWith("net", StringComparison.OrdinalIgnoreCase) &&
                 int.TryParse(tfmString[3].ToString(), out var major) &&
-                major >= 5)
+                major < 5)
             {
-                return false;
+                return true;
             }
 
-            return true;
+            return false;
         }
 
         private static void AnalyzeOperationBlock(OperationAnalysisContext context, INamedTypeSymbol pNSException, INamedTypeSymbol obsoleteAttribute,
@@ -205,25 +224,58 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                                 }
                                 else
                                 {
-                                    context.ReportDiagnostic(throwOperation.CreateDiagnostic(OneLinerThrow,
+                                    context.ReportDiagnostic(throwOperation.CreateDiagnostic(OneLinerThrowReachable,
                                         context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), attributes.SupportedList));
                                 }
                             }
                         }
                     }
-                    else if (!attributes.UnupportedList.IsEmpty && !attributes.Obsolete)
+                    else
+                    if (!attributes.UnupportedList.IsEmpty && !attributes.Obsolete)
                     {
                         if (attributes.SupportedList.IsEmpty)
                         {
                             var containingBlock = throwOperation.GetTopmostParentBlock();
-                            if (containingBlock != null && !IsSingleStatement(containingBlock))
+                            if (containingBlock != null && IsSingleStatement(containingBlock))
                             {
                                 if (IsConditional(containingBlock, out var conditional))
                                 {
-
+                                    if (IsPlatformCheckMatch(conditional.Condition, guardMethods, osPlatformType, attributes.SupportedList, out var platform))
+                                    {
+                                        context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsFromSupported,
+                                            context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), platform, "cross platform"));
+                                    }
+                                    else
+                                    {
+                                        context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsNonPlatformCheck,
+                                            context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation))));
+                                    }
                                     context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsFromUnsupported,
                                         context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation))));
                                 }
+                                else
+                                {
+                                    context.ReportDiagnostic(throwOperation.CreateDiagnostic(OneLinerThrowUnreachable, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), attributes.UnupportedList));
+                                }
+                            }
+                            else
+                            {
+                                context.ReportDiagnostic(throwOperation.CreateDiagnostic(MultiLinerThrowUnreachable, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), attributes.UnupportedList));
+                            }
+                        }
+                        else
+                        {
+                            var containingBlock = throwOperation.GetTopmostParentBlock();
+                            if (containingBlock != null && IsSingleStatement(containingBlock))
+                            {
+                                if (!IsConditional(containingBlock, out var _))
+                                {
+                                    context.ReportDiagnostic(throwOperation.CreateDiagnostic(OneLinerThrowUnreachable, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), attributes.UnupportedList));
+                                }
+                            }
+                            else
+                            {
+                                context.ReportDiagnostic(throwOperation.CreateDiagnostic(MultiLinerThrowUnreachable, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), attributes.UnupportedList));
                             }
                         }
                     }
@@ -238,7 +290,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                             if (IsPlatformCheckMatch(conditional.Condition, guardMethods, osPlatformType, attributes.SupportedList, out var platform))
                             {
                                 context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsFromSupported,
-                                    context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), platform, "cross platform"));
+                                  context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), platform, "cross platform"));
                             }
                             else
                             {
@@ -248,12 +300,12 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                         }
                         else
                         {
-                            context.ReportDiagnostic(throwOperation.CreateDiagnostic(OneLinerThrow, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation))));
+                            context.ReportDiagnostic(throwOperation.CreateDiagnostic(OneLinerThrowReachable, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation))));
                         }
                     }
                     else
                     {
-                        context.ReportDiagnostic(throwOperation.CreateDiagnostic(MultiLinerThrow, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation))));
+                        context.ReportDiagnostic(throwOperation.CreateDiagnostic(MultiLinerThrowReachable, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation))));
                     }
                 }
             }
