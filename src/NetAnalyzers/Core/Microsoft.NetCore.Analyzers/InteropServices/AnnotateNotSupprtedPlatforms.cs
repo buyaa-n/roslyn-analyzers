@@ -16,7 +16,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
     [DiagnosticAnalyzer(LanguageNames.CSharp, LanguageNames.VisualBasic)]
     public sealed class AnnotateNotSupprtedPlatforms : DiagnosticAnalyzer
     {
-        internal const string RuleId = "CA1419";
+        internal const string RuleId = "CA1420";
         private static readonly LocalizableString s_localizableTitle = "Annotate not supported platform";
         private static readonly LocalizableString s_localizableOneLinerThrow = "'{0}' unconditionally throws PNSE and not annotated accordingly, reachable on {1}";
         private static readonly LocalizableString s_localizableOneLinerThrowUnsupported = "'{0}' unconditionally throws PNSE and not annotated accordingly, unreachable on {1}";
@@ -163,12 +163,12 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
             if (tfmString?.Length >= 4 &&
                 tfmString.StartsWith("net", StringComparison.OrdinalIgnoreCase) &&
                 int.TryParse(tfmString[3].ToString(), out var major) &&
-                major < 5)
+                major >= 5)
             {
-                return true;
+                return false;
             }
 
-            return false;
+            return true;
         }
 
         private static void AnalyzeOperationBlock(OperationAnalysisContext context, INamedTypeSymbol pNSException, INamedTypeSymbol obsoleteAttribute,
@@ -215,25 +215,24 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                             {
                                 if (IsConditional(containingBlock, out var conditional))
                                 {
-                                    if (IsPlatformCheckMatch(conditional.Condition, guardMethods, osPlatformType, attributes.SupportedList, out var platform))
+                                    if (IsPlatformCheckMatch(conditional.Condition, guardMethods, osPlatformType, attributes.SupportedList, out var _))
                                     {
-                                        context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsFromSupported,
-                                            context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), platform, attributes.SupportedList));
+                                        /*context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsFromSupported,
+                                            context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), platform, attributes.SupportedList));*/
                                     }
                                     // TODO check the condition ;
                                 }
                                 else
                                 {
-                                    context.ReportDiagnostic(throwOperation.CreateDiagnostic(OneLinerThrowReachable,
-                                        context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), attributes.SupportedList));
+                                    /*context.ReportDiagnostic(throwOperation.CreateDiagnostic(OneLinerThrowReachable,
+                                        context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), attributes.SupportedList));*/
                                 }
                             }
                         }
                     }
-                    else
-                    if (!attributes.UnupportedList.IsEmpty && !attributes.Obsolete)
+                    else if (!attributes.UnupportedList.IsEmpty && !attributes.Obsolete)
                     {
-                        if (attributes.SupportedList.IsEmpty)
+                        /*if (attributes.SupportedList.IsEmpty)
                         {
                             var containingBlock = throwOperation.GetTopmostParentBlock();
                             if (containingBlock != null && IsSingleStatement(containingBlock))
@@ -277,7 +276,7 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                             {
                                 context.ReportDiagnostic(throwOperation.CreateDiagnostic(MultiLinerThrowUnreachable, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), attributes.UnupportedList));
                             }
-                        }
+                        }*/
                     }
                 }
                 else
@@ -300,12 +299,12 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                         }
                         else
                         {
-                            context.ReportDiagnostic(throwOperation.CreateDiagnostic(OneLinerThrowReachable, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation))));
+                            context.ReportDiagnostic(throwOperation.CreateDiagnostic(OneLinerThrowReachable, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), "cross platform"));
                         }
                     }
                     else
                     {
-                        context.ReportDiagnostic(throwOperation.CreateDiagnostic(MultiLinerThrowReachable, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation))));
+                        context.ReportDiagnostic(throwOperation.CreateDiagnostic(MultiLinerThrowReachable, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), "cross platform"));
                     }
                 }
             }
