@@ -62,22 +62,22 @@ public class Test
         if (a == 0)
         {
             a=1;
-            [|throw new PlatformNotSupportedException();|] // 'Test.MethodWithMultilineConditional(int)' conditionally throws PNSE in non platform check
+            throw new PlatformNotSupportedException(); // non platform check, no need to flag
         }
-    }    
+    }  
 
     public void MethodWithConditional()
     {
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            [|throw new PlatformNotSupportedException();|] // 'Test.MethodWithConditional()' conditionally throws PNSE in non platform check
+            [|throw new PlatformNotSupportedException();|] // 'Test.MethodWithConditional()' throws PNSE on 'Windows' and has no unsupported annotation and reachable on all platforms
         }
     }
 
     public void MethodWithOtherStatement()
     {
         string message = ""Hello world"";
-        [|throw new PlatformNotSupportedException(message);|] // '{0}' throws PNSE and has no annotation, reachable on {1}
+        [|throw new PlatformNotSupportedException(message);|] // 'Test.MethodWithOtherStatement()' throws PNSE and has no annotation, reachable on cross platform
     }
 
     public void MethodWithMoreStatements(int state, string msg)
@@ -87,14 +87,14 @@ public class Test
         if (a > 0)
             DoSomething(a);
         else
-            [|throw new PlatformNotSupportedException();|] // '{0}' throws PNSE and has no annotation, reachable on {1}
+            throw new PlatformNotSupportedException(); // within non platform related conditional
     }
 
     private void DoSomething(int a)
     {
         a--;
         if (a < 0)
-            [|throw new PlatformNotSupportedException();|] // '{0}' throws PNSE and has no annotation, reachable on {1}
+            throw new PlatformNotSupportedException(); // same, non platform check
         Console.WriteLine(a);
     }
 }";
@@ -103,7 +103,7 @@ public class Test
         }
 
         [Fact]
-        public async Task IgnoreDefaultCase()
+        public async Task IgnoreSwitchCase()
         {
             var csSource = @"
 using System;
@@ -127,7 +127,7 @@ public class Test
         {
             case 1 : a++; break;
             case 2 : a+=2; break;
-            case 3 : [|throw new PlatformNotSupportedException(""message"")|]; break;
+            case 3 : throw new PlatformNotSupportedException(""message""); break;
             default : a=0; break; 
         }
     }
@@ -182,13 +182,13 @@ public class Test
     [SupportedOSPlatform(""Linux"")]
     public void OneLinerThrowWithSupprtedAttribute() 
     {
-        [|throw new PlatformNotSupportedException();|] // 'Test.OneLinerThrowWithSupprtedAttribute()' unconditionally throws PNSE and not annotated accordingly, reachable on Analyzer.Utilities.SmallDictionary`2[System.String,System.Version]
+        [|throw new PlatformNotSupportedException();|] // 'Test.OneLinerThrowWithSupprtedAttribute()' unconditionally throws PNSE and not annotated accordingly, reachable on Linux
     }
 
     [UnsupportedOSPlatform(""Linux"")]
     public void OneLinerThrowWithUnsupprtedAttribute() 
     {
-        throw new PlatformNotSupportedException(); // 'Test.OneLinerThrowWithUnsupprtedAttribute()' unconditionally throws PNSE and not annotated accordingly, unreachable on Analyzer.Utilities.SmallDictionary`2[System.String,System.Version]
+        [|throw new PlatformNotSupportedException();|] // 'Test.OneLinerThrowWithUnsupprtedAttribute()' unconditionally throws PNSE unreachable on Linux and reachable on all platforms
     }
 
     [SupportedOSPlatform(""Linux"")]

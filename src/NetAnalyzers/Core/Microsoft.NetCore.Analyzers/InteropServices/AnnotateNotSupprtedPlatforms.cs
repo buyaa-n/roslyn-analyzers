@@ -19,15 +19,18 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
         internal const string RuleId = "CA1420";
         private static readonly LocalizableString s_localizableTitle = "Annotate not supported platform";
         private static readonly LocalizableString s_localizableOneLinerThrow = "'{0}' unconditionally throws PNSE and not annotated accordingly, reachable on {1}";
-        private static readonly LocalizableString s_localizableOneLinerThrowUnsupported = "'{0}' unconditionally throws PNSE and not annotated accordingly, unreachable on {1}";
+        private static readonly LocalizableString s_localizableOneLinerThrowUnsupported = "'{0}' unconditionally throws PNSE unreachable on {1} and reachable on {2}";
         private static readonly LocalizableString s_localizableConditionallyThrowsFromSupported = "'{0}' throws PNSE on '{1}' and has no unsupported annotation and reachable on {2}";
-        private static readonly LocalizableString s_localizableConditionallyThrowsFromUnsupported = "'{0}' throws PNSE on '{1}' and has no unsupported annotation, unreachable on {2}";
+        private static readonly LocalizableString s_localizableConditionallyThrowsFromSupportedUnsupported = "'{0}' throws PNSE on '{1}' and reachable on {2} and unreachable {3}";
+        private static readonly LocalizableString s_localizableConditionallyThrowsFromUnsupported = "'{0}' throws PNSE on '{1}' and unreachable on {2}";
+        //private static readonly LocalizableString s_localizablePlatformCheckThrowsFromUnsupported = "'{0}' throws PNSE on '{1}' and has {2} platform check, unreachable on {3}";
         private static readonly LocalizableString s_localizableConditionallyThrowsNotPlatformCheck = "'{0}' conditionally throws PNSE in non platform check";
         private static readonly LocalizableString s_localizableMultiLinerThrowReachable = "'{0}' throws PNSE and has no annotation, reachable on {1}";
-        private static readonly LocalizableString s_localizableMultiLinerThrowUnreachable = "'{0}' throws PNSE and has no annotation, unreachable on {1}";
+        private static readonly LocalizableString s_localizableMultiLinerThrowUnreachable = "'{0}' throws PNSE, unreachable on {1}, reachable on {1}";
         private static readonly LocalizableString s_localizableDescription = "Annotate not supported platform.";
         private const string SupportedOSPlatformAttribute = nameof(SupportedOSPlatformAttribute);
         private const string UnsupportedOSPlatformAttribute = nameof(UnsupportedOSPlatformAttribute);
+        private const string AllPlatforms = "all platforms";
 
         internal static DiagnosticDescriptor OneLinerThrowReachable = DiagnosticDescriptorHelper.Create(RuleId,
                                                                                       s_localizableTitle,
@@ -64,6 +67,24 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                                                                                       description: s_localizableDescription,
                                                                                       isPortedFxCopRule: false,
                                                                                       isDataflowRule: false);
+
+        internal static DiagnosticDescriptor ConditionallyThrowsFromSupportedUnsupported = DiagnosticDescriptorHelper.Create(RuleId,
+                                                                      s_localizableTitle,
+                                                                      s_localizableConditionallyThrowsFromSupportedUnsupported,
+                                                                      DiagnosticCategory.Interoperability,
+                                                                      RuleLevel.BuildWarning,
+                                                                      description: s_localizableDescription,
+                                                                      isPortedFxCopRule: false,
+                                                                      isDataflowRule: false);
+
+        /*internal static DiagnosticDescriptor PlatformCheckThrowsFromUnsupported = DiagnosticDescriptorHelper.Create(RuleId,
+                                                                              s_localizableTitle,
+                                                                              s_localizablePlatformCheckThrowsFromUnsupported,
+                                                                              DiagnosticCategory.Interoperability,
+                                                                              RuleLevel.BuildWarning,
+                                                                              description: s_localizableDescription,
+                                                                              isPortedFxCopRule: false,
+                                                                              isDataflowRule: false);*/
 
         internal static DiagnosticDescriptor ConditionallyThrowsNonPlatformCheck = DiagnosticDescriptorHelper.Create(RuleId,
                                                                               s_localizableTitle,
@@ -204,125 +225,263 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
                     }
                 }
 
-                if (TryGetPlatformAttributes(context.ContainingSymbol, out var attributes, obsoleteAttribute))
+                var containingBlock = throwOperation.GetTopmostParentBlock();
+                if (TryGetPlatformAttributes(containingSymbol, out var attributes, obsoleteAttribute))
                 {
-                    if (!attributes.SupportedList.IsEmpty && !attributes.Obsolete)
+                    if (!attributes.Obsolete)
                     {
-                        if (attributes.UnupportedList.IsEmpty)
+                        if (!attributes.SupportedList.IsEmpty)
                         {
-                            var containingBlock = throwOperation.GetTopmostParentBlock();
-                            if (containingBlock != null && IsSingleStatement(containingBlock))
+                            if (attributes.UnupportedList.IsEmpty)
                             {
-                                if (IsConditional(containingBlock, out var conditional))
+                                if (containingBlock != null)
                                 {
-                                    if (IsPlatformCheckMatch(conditional.Condition, guardMethods, osPlatformType, attributes.SupportedList, out var _))
+                                    if (IsSingleStatement(containingBlock))
                                     {
-                                        /*context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsFromSupported,
-                                            context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), platform, attributes.SupportedList));*/
+                                        if (IsConditional(containingBlock, out var conditional))
+                                        {
+                                            if (IsPlatformCheck(conditional.Condition, guardMethods, osPlatformType, out var platform, out var _))
+                                            {
+                                                if (attributes.SupportedList.ContainsKey(platform))
+                                                {
+                                                    context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsFromSupported, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)),
+                                                        platform, string.Join(",", attributes.SupportedList.Keys.AsEnumerable())));
+                                                }
+                                            } // Do not flag non platform check conditions
+                                        }
+                                        else if (!IsSwitchCase(containingBlock))
+                                        {
+                                            // "'{0}' unconditionally throws PNSE and not annotated accordingly, reachable on {1}"
+                                            context.ReportDiagnostic(throwOperation.CreateDiagnostic(OneLinerThrowReachable, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)),
+                                                string.Join(",", attributes.SupportedList.Keys.AsEnumerable())));
+                                        }
                                     }
-                                    // TODO check the condition ;
+                                    else // multi line
+                                    {
+                                        if (throwOperation.Parent is IConditionalOperation conditional)
+                                        {
+                                            if (IsPlatformCheck(conditional.Condition, guardMethods, osPlatformType, out var platform, out var _))
+                                            {
+                                                if (attributes.SupportedList.ContainsKey(platform))
+                                                {
+                                                    context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsFromSupported, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)),
+                                                        platform, string.Join(",", attributes.SupportedList.Keys.AsEnumerable())));
+                                                }
+                                            } // Do not flag non platform check conditions
+                                        }
+                                        else if (throwOperation.Parent is not ISwitchCaseOperation) // do not flag throws within switch case
+                                        {
+                                            // "'{0}' unconditionally throws PNSE and not annotated accordingly, reachable on {1}"
+                                            context.ReportDiagnostic(throwOperation.CreateDiagnostic(MultiLinerThrowReachable, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)),
+                                                string.Join(",", attributes.SupportedList.Keys.AsEnumerable())));
+                                        }
+                                    }
                                 }
                                 else
                                 {
-                                    /*context.ReportDiagnostic(throwOperation.CreateDiagnostic(OneLinerThrowReachable,
-                                        context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), attributes.SupportedList));*/
+                                    context.ReportDiagnostic(throwOperation.CreateDiagnostic(OneLinerThrowReachable,
+                                        context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), attributes.SupportedList));
                                 }
                             }
-                        }
-                    }
-                    else if (!attributes.UnupportedList.IsEmpty && !attributes.Obsolete)
-                    {
-                        /*if (attributes.SupportedList.IsEmpty)
-                        {
-                            var containingBlock = throwOperation.GetTopmostParentBlock();
-                            if (containingBlock != null && IsSingleStatement(containingBlock))
+                            else // has both supported and unsupported
                             {
-                                if (IsConditional(containingBlock, out var conditional))
+                                if (containingBlock != null)
                                 {
-                                    if (IsPlatformCheckMatch(conditional.Condition, guardMethods, osPlatformType, attributes.SupportedList, out var platform))
+                                    if (IsSingleStatement(containingBlock))
                                     {
-                                        context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsFromSupported,
-                                            context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), platform, "cross platform"));
+                                        if (IsConditional(containingBlock, out var conditional))
+                                        {
+                                            if (IsPlatformCheck(conditional.Condition, guardMethods, osPlatformType, out var platform, out var _))
+                                            {
+                                                if (attributes.SupportedList.ContainsKey(platform))
+                                                {
+                                                    context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsFromSupported, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)),
+                                                        platform, string.Join(",", attributes.SupportedList.Keys.AsEnumerable())));
+                                                }
+                                                else if (!attributes.UnupportedList.ContainsKey(platform))
+                                                {
+                                                    context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsFromSupportedUnsupported, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)),
+                                                         platform, string.Join(",", attributes.SupportedList.Keys.AsEnumerable()), string.Join(",", attributes.UnupportedList.Keys.AsEnumerable())));
+                                                }
+                                            } // Do not flag non platform check conditions
+                                        }
+                                        else if (throwOperation.Parent is not ISwitchCaseOperation)
+                                        {
+                                            // "'{0}' unconditionally throws PNSE and not annotated accordingly, reachable on {1}"
+                                            context.ReportDiagnostic(throwOperation.CreateDiagnostic(OneLinerThrowReachable, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)),
+                                                string.Join(",", attributes.SupportedList.Keys.AsEnumerable()) + ", unreachable: " + string.Join(",", attributes.UnupportedList.Keys.AsEnumerable())));
+                                        }
                                     }
-                                    else
+                                    else // multi line
                                     {
-                                        context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsNonPlatformCheck,
-                                            context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation))));
+                                        if (throwOperation.Parent is IConditionalOperation conditional)
+                                        {
+                                            if (IsPlatformCheck(conditional.Condition, guardMethods, osPlatformType, out var platform, out var negated))
+                                            {
+                                                if (negated)
+                                                {
+                                                    if (attributes.UnupportedList.ContainsKey(platform))
+                                                    {
+                                                        context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsFromSupportedUnsupported, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)),
+                                                             platform, string.Join(",", attributes.SupportedList.Keys.AsEnumerable()), string.Join(",", attributes.UnupportedList.Keys.AsEnumerable())));
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    if (!attributes.UnupportedList.ContainsKey(platform))
+                                                    {
+                                                        context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsFromSupported, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)),
+                                                            platform, string.Join(",", attributes.SupportedList.Keys.AsEnumerable())));
+                                                    }
+                                                    else if (attributes.SupportedList.ContainsKey(platform))
+                                                    {
+                                                        context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsFromSupportedUnsupported, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)),
+                                                             platform, string.Join(",", attributes.SupportedList.Keys.AsEnumerable()), string.Join(",", attributes.UnupportedList.Keys.AsEnumerable())));
+                                                    }
+                                                }
+                                            } // Do not flag non platform check conditions
+                                        }
+                                        else if (throwOperation.Parent is not ISwitchCaseOperation) // do not flag throws within switch case
+                                        {
+                                            // "'{0}' unconditionally throws PNSE and not annotated accordingly, reachable on {1}"
+                                            context.ReportDiagnostic(throwOperation.CreateDiagnostic(MultiLinerThrowReachable, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)),
+                                                string.Join(",", attributes.SupportedList.Keys.AsEnumerable()) + ", unreachable: " + string.Join(",", attributes.UnupportedList.Keys.AsEnumerable())));
+                                        }
                                     }
-                                    context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsFromUnsupported,
-                                        context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation))));
                                 }
                                 else
                                 {
-                                    context.ReportDiagnostic(throwOperation.CreateDiagnostic(OneLinerThrowUnreachable, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), attributes.UnupportedList));
+                                    context.ReportDiagnostic(throwOperation.CreateDiagnostic(MultiLinerThrowReachable, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), attributes.SupportedList));
                                 }
-                            }
-                            else
-                            {
-                                context.ReportDiagnostic(throwOperation.CreateDiagnostic(MultiLinerThrowUnreachable, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), attributes.UnupportedList));
                             }
                         }
-                        else
+                        else if (!attributes.UnupportedList.IsEmpty) // has only unsupported attributes
                         {
-                            var containingBlock = throwOperation.GetTopmostParentBlock();
-                            if (containingBlock != null && IsSingleStatement(containingBlock))
+                            if (containingBlock != null)
                             {
-                                if (!IsConditional(containingBlock, out var _))
+                                if (IsSingleStatement(containingBlock))
                                 {
-                                    context.ReportDiagnostic(throwOperation.CreateDiagnostic(OneLinerThrowUnreachable, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), attributes.UnupportedList));
+                                    if (IsConditional(containingBlock, out var conditional))
+                                    {
+                                        if (IsPlatformCheck(conditional.Condition, guardMethods, osPlatformType, out var platform, out var negated))
+                                        { // '{0}' throws PNSE on '{1}' and unreachable on {2}
+                                            if (negated)
+                                            {   // probably should flag for any case, with better messaging
+                                                if (attributes.UnupportedList.ContainsKey(platform))
+                                                {
+                                                    context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsFromUnsupported,
+                                                        context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), platform, string.Join(",", attributes.UnupportedList.Keys.AsEnumerable())));
+                                                }
+                                            }
+                                            else
+                                            {
+                                                if (!attributes.UnupportedList.ContainsKey(platform))
+                                                {
+                                                    context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsFromUnsupported,
+                                                        context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), platform, string.Join(",", attributes.UnupportedList.Keys.AsEnumerable())));
+                                                }
+                                            }
+                                        } // Do not flag non platform check conditions
+                                    }
+                                    else if (!IsSwitchCase(containingBlock))
+                                    {
+                                        //'{0}' unconditionally throws PNSE unreachable on {1} and reachable on {2}
+                                        context.ReportDiagnostic(throwOperation.CreateDiagnostic(OneLinerThrowUnreachable, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)),
+                                            string.Join(",", attributes.UnupportedList.Keys.AsEnumerable()), AllPlatforms));
+                                    }
+                                }
+                                else
+                                {
+                                    if (throwOperation.Parent is IConditionalOperation conditional)
+                                    {
+                                        if (IsPlatformCheck(conditional.Condition, guardMethods, osPlatformType, out var platform, out var negated))
+                                        { //'{0}' throws PNSE on '{1}' and unreachable on {2}
+                                            if (negated)
+                                            {   // probably should flag for any case, with better messaging
+                                                if (attributes.UnupportedList.ContainsKey(platform))
+                                                {
+                                                    context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsFromUnsupported,
+                                                        context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), platform, string.Join(",", attributes.UnupportedList.Keys.AsEnumerable())));
+                                                }
+                                            }
+                                            else if (!attributes.UnupportedList.ContainsKey(platform))
+                                            {
+                                                context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsFromUnsupported,
+                                                    context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), platform, string.Join(",", attributes.UnupportedList.Keys.AsEnumerable())));
+                                            }
+                                        }
+                                    }
+                                    else if (throwOperation.Parent is not ISwitchCaseOperation)
+                                    { // "'{0}' throws PNSE, unreachable on {1}, reachable on {1}"
+                                        context.ReportDiagnostic(throwOperation.CreateDiagnostic(MultiLinerThrowUnreachable, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)),
+                                            string.Join(",", attributes.UnupportedList.Keys.AsEnumerable()), AllPlatforms));
+                                    }
                                 }
                             }
-                            else
-                            {
-                                context.ReportDiagnostic(throwOperation.CreateDiagnostic(MultiLinerThrowUnreachable, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), attributes.UnupportedList));
-                            }
-                        }*/
+                        }
                     }
                 }
-                else
+                else // cross platform and has not obsoleted
                 {
-                    var containingBlock = throwOperation.GetTopmostParentBlock();
-                    if (containingBlock != null && IsSingleStatement(containingBlock))
+                    if (containingBlock != null)
                     {
-                        if (IsConditional(containingBlock, out var conditional))
+                        if (IsSingleStatement(containingBlock))
                         {
-                            if (IsPlatformCheckMatch(conditional.Condition, guardMethods, osPlatformType, attributes.SupportedList, out var platform))
+                            if (IsConditional(containingBlock, out var conditional))
                             {
-                                context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsFromSupported,
-                                  context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), platform, "cross platform"));
+                                if (IsPlatformCheck(conditional.Condition, guardMethods, osPlatformType, out var platform, out var _))
+                                { // "'{0}' throws PNSE on '{1}' and has no unsupported annotation and reachable on {2}";
+                                    context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsFromSupported,
+                                      context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), platform, AllPlatforms));
+                                }
+                                else
+                                {
+                                    // non cross platformcheck is usually false positive
+                                    //context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsNonPlatformCheck, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation))));
+                                }
                             }
-                            else
+                            else if (!IsSwitchCase(containingBlock))
                             {
-                                context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsNonPlatformCheck,
-                                    context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation))));
+                                context.ReportDiagnostic(throwOperation.CreateDiagnostic(OneLinerThrowReachable, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), AllPlatforms));
                             }
                         }
                         else
                         {
-                            context.ReportDiagnostic(throwOperation.CreateDiagnostic(OneLinerThrowReachable, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), "cross platform"));
+                            if (throwOperation.Parent is IConditionalOperation conditional)
+                            {
+                                if (IsPlatformCheck(conditional.Condition, guardMethods, osPlatformType, out var platform, out var _))
+                                { // "'{0}' throws PNSE on '{1}' and has no unsupported annotation and reachable on {2}";
+                                    context.ReportDiagnostic(throwOperation.CreateDiagnostic(ConditionallyThrowsFromSupported,
+                                      context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), platform, AllPlatforms));
+                                }
+                            }
+                            else if (throwOperation.Parent is not ISwitchCaseOperation)
+                            {
+                                context.ReportDiagnostic(throwOperation.CreateDiagnostic(MultiLinerThrowReachable, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), "cross platform"));
+                            }
                         }
-                    }
-                    else
-                    {
-                        context.ReportDiagnostic(throwOperation.CreateDiagnostic(MultiLinerThrowReachable, context.ContainingSymbol.ToDisplayString(GetLanguageSpecificFormat(throwOperation)), "cross platform"));
                     }
                 }
             }
 
-            static bool IsPlatformCheckMatch(IOperation condition, ImmutableArray<IMethodSymbol> guardMethods,
-                INamedTypeSymbol? osPlatformType, SmallDictionary<string, Version> supportedList, [NotNullWhen(true)] out string? platform)
+            static bool IsPlatformCheck(IOperation condition, ImmutableArray<IMethodSymbol> guardMethods,
+                INamedTypeSymbol? osPlatformType, [NotNullWhen(true)] out string? platform, out bool negated)
             {
                 platform = null;
+                negated = false;
+                if (condition is IUnaryOperation unary)
+                {
+                    condition = unary.Operand;
+                    negated = true;
+                }
+
                 if (condition is IInvocationOperation invocation && guardMethods.Contains(invocation.TargetMethod.OriginalDefinition))
                 {
                     using var infosBuilder = ArrayBuilder<PlatformCompatibilityAnalyzer.PlatformMethodValue>.GetInstance();
                     if (PlatformCompatibilityAnalyzer.PlatformMethodValue.TryDecode(invocation.TargetMethod, invocation.Arguments, null, osPlatformType, infosBuilder))
                     {
                         platform = infosBuilder[0].PlatformName;
-                        if (supportedList.ContainsKey(platform))
-                        {
-                            return true;
-                        }
+                        return true;
                     }
                 }
                 return false;
@@ -349,6 +508,11 @@ namespace Microsoft.NetCore.Analyzers.InteropServices
 
             static SymbolDisplayFormat GetLanguageSpecificFormat(IOperation operation) => operation.Language == LanguageNames.CSharp ?
                 SymbolDisplayFormat.CSharpShortErrorMessageFormat : SymbolDisplayFormat.VisualBasicShortErrorMessageFormat;
+        }
+
+        private static bool IsSwitchCase(IBlockOperation containingBlock)
+        {
+            return containingBlock.Operations[0] is ISwitchOperation;
         }
 
         private static bool TryGetPlatformAttributes(ISymbol symbol, out PlatformAttributes attributes, INamedTypeSymbol obsoleteAttribute)
